@@ -55,12 +55,15 @@ sudo chown -R kleber:kleber /srv/Projetos
 # No servidor, dentro /srv/Projetos/nexus-2.0
 cd /srv/Projetos/nexus-2.0
 
-# Clone o repositório GitHub
-git clone https://github.com/soservices/nexus.git .
+# Clone o repositório GitHub (branch develop)
+git clone -b develop https://github.com/kkborges/soservices.git .
 
 # Ou se for primeira vez:
-git clone https://github.com/soservices/nexus.git nexus-2.0
+git clone -b develop https://github.com/kkborges/soservices.git nexus-2.0
 cd nexus-2.0
+
+# Verificar branch ativa
+git branch -a  # Deve mostrar * develop
 ```
 
 ### 1.4 Verificar Estrutura
@@ -133,8 +136,8 @@ EOF
 
 # Ou para testes com BD real:
 cat > .env.test-db << 'EOF'
-DATABASE_URL=postgresql://kleber:password@localhost/nexus_test
-REDIS_URL=redis://localhost:6379/1
+DATABASE_URL=postgresql://nexus:nexus@soservices@2026@172.18.0.7/nexus
+REDIS_URL=redis://:6379/1
 TESTING=true
 EOF
 ```
@@ -146,24 +149,35 @@ EOF
 ### 3.1 Teste Básico - Health Check
 
 ```bash
-# No /srv/Projetos/nexus-2.0/backend/
-cd /srv/Projetos/nexus-2.0/backend
+# Opção 1: Usar script helper (RECOMENDADO)
+cd /srv/Projetos/nexus-2.0
+chmod +x scripts/run_tests.sh
+./scripts/run_tests.sh --collect-only
 
-# Executar pytest descoberta
+# Opção 2: Executar manualmente com PYTHONPATH correto
+cd /srv/Projetos/nexus-2.0/backend
+export PYTHONPATH="$(pwd):$PYTHONPATH"
 pytest --collect-only ../tests/backend/
 
-# Deve listar ~30+ testes encontrados
+# Deve listar ~46 testes encontrados ✅
 ```
 
 ### 3.2 Rodar Testes Unitários
 
 ```bash
-# Testes rápidos (sem dependências externas)
+# Usando script helper (RECOMENDADO)
+cd /srv/Projetos/nexus-2.0
+./scripts/run_tests.sh ../tests/backend/unit -v
+
+# Ou manualmente
+cd /srv/Projetos/nexus-2.0/backend
+export PYTHONPATH="$(pwd):$PYTHONPATH"
 pytest ../tests/backend/unit -v
 
 # Expected output:
 # ✅ test_auth_service.py - 15 testes passando
-# ✅ test_schemas.py - 10 testes passando
+# ✅ test_schemas.py - 12 testes passando
+# ============ XX passed in X.XXs =============
 ```
 
 ### 3.3 Rodar Testes de Integração
@@ -180,16 +194,27 @@ docker compose up -d postgres redis  # Iniciar serviços
 docker ps | grep postgres
 docker ps | grep redis
 
-# Agora rodar testes
+# Agora rodar testes com script helper
 cd /srv/Projetos/nexus-2.0
-pytest tests/backend/integration -v
+./scripts/run_tests.sh ../tests/backend/integration -v
+
+# Ou manualmente com PYTHONPATH
+cd /srv/Projetos/nexus-2.0/backend
+export PYTHONPATH="$(pwd):$PYTHONPATH"
+pytest ../tests/backend/integration -v
 ```
 
 ### 3.4 Cobertura Completa
 
 ```bash
-# Rodar com coverage report
-pytest tests/backend \
+# Opção 1: Usar script helper (RECOMENDADO)
+cd /srv/Projetos/nexus-2.0
+./scripts/run_tests.sh -v --cov=app --cov-report=term --cov-report=html
+
+# Opção 2: Executar manualmente com PYTHONPATH correto
+cd /srv/Projetos/nexus-2.0/backend
+export PYTHONPATH="$(pwd):$PYTHONPATH"
+pytest ../tests/backend \
   -v \
   --cov=app \
   --cov-report=term \
@@ -197,25 +222,34 @@ pytest tests/backend \
 
 # Output esperado:
 # ============ test session starts =============
-# collected 30+ items
+# collected 46+ items
 # tests/backend/unit/test_auth_service.py::TestPasswordHashing::test_hash_password PASSED
 # ...
-# ============ 30+ passed in X.XXs =============
+# ============ 46+ passed in X.XXs =============
 # 
-# Coverage: XX%
+# Coverage: 75%+ (alvo 80%+)
 
 # Verificar relatório HTML
-ls -la coverage_html/index.html
+ls -la backend/coverage_html/index.html
+firefox backend/coverage_html/index.html  # Ou seu browser favorito
 ```
 
 ### 3.5 Testes em Paralelo (Rápido!)
 
 ```bash
-# Instalar plugin de paralelismo
-pip install pytest-xdist
+# Pytest-xdist já está em requirements-dev.txt
+# Rodar em paralelo com script helper
+cd /srv/Projetos/nexus-2.0
+./scripts/run_tests.sh -n auto -v
 
-# Rodar em paralelo (muito mais rápido)
-pytest tests/backend -n auto
+# Ou manualmente
+cd /srv/Projetos/nexus-2.0/backend
+export PYTHONPATH="$(pwd):$PYTHONPATH"
+pytest ../tests/backend -n auto -v --cov=app
+
+# Muito mais rápido! Exemplo:
+# Sequential: ============ 46 passed in 15.32s =============
+# Parallel:   ============ 46 passed in 3.45s =============
 ```
 
 ---
@@ -306,13 +340,20 @@ cat ~/.ssh/github_deploy
 ### 5.3 Testar GitHub Actions
 
 ```bash
-# Fazer commit de um teste trivial
-git add .
-git commit -m "chore: add CI/CD pipeline and tests"
-git push origin develop
+# O GitHub Actions foi acionado automaticamente no push inicial
+# Para verificar status do pipeline:
 
-# No GitHub, ir para Actions tab
-# Verificar que pipeline rodou com sucesso
+# 1. Acessar: https://github.com/kkborges/soservices/actions
+# 2. Procurar por branch 'develop'
+# 3. Verificar que rodou com sucesso (✅ all jobs passed)
+
+# Pipeline executa:
+# - Black (formatação de código)
+# - Pylint (qualidade - score 7.0+)
+# - MyPy (type checking)
+# - isort (organização de imports)
+# - Pytest (46+ testes com coverage 80%+)
+# - Build Docker image
 ```
 
 ---
@@ -396,6 +437,36 @@ watch -n 1 "docker stats --no-stream"
 
 ---
 
+## 🌿 ESTRATÉGIA DE BRANCHES
+
+O projeto utiliza duas branches principais:
+
+| Branch | Propósito | Acesso | Deploy |
+|--------|-----------|--------|--------|
+| **develop** | Desenvolvimento e Staging | Aberto | Automático (GitHub Actions) |
+| **main** | Produção Estável | Protegido | Manual (requer aprovação) |
+
+### Fluxo de Trabalho:
+
+```bash
+# 1. Trabalhar em develop (atual)
+git checkout develop
+
+# 2. Fazer alterações e testar
+git add .
+git commit -m "feat: descrição da mudança"
+git push origin develop  # GitHub Actions roda testes automaticamente
+
+# 3. Quando estável, mergebr para main
+git checkout main
+git merge develop
+git push origin main  # Deploy produção
+```
+
+**Status Atual**: Projeto no branch `develop` pronto para testes e desenvolvimento.
+
+---
+
 ## ✅ CHECKLIST DE VALIDAÇÃO
 
 - [ ] SSH conecta ao servidor
@@ -431,11 +502,37 @@ ls -la tests/backend/
 
 ### Erros de importação
 ```bash
-# Adicionar backend ao PYTHONPATH
-export PYTHONPATH="${PYTHONPATH}:/srv/Projetos/nexus-2.0/backend"
+# IMPORTANTE: PYTHONPATH deve incluir o diretório backend
 
-# Ou permanentemente no .bashrc
-echo 'export PYTHONPATH="${PYTHONPATH}:/srv/Projetos/nexus-2.0/backend"' >> ~/.bashrc
+# Opção 1: Definir antes de rodar testes
+cd /srv/Projetos/nexus-2.0/backend
+export PYTHONPATH="$(pwd):$PYTHONPATH"
+pytest ../tests/backend/ -v
+
+# Opção 2: Usar script helper (automático)
+cd /srv/Projetos/nexus-2.0
+./scripts/run_tests.sh -v
+
+# Opção 3: Adicionar permanentemente ao .bashrc
+echo 'export PYTHONPATH="/srv/Projetos/nexus-2.0/backend:$PYTHONPATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Coverage mostra 0%
+```bash
+# Causa: PYTHONPATH incorreto ou diretório de execução errado
+
+# Solução: Use o script helper ou defina PYTHONPATH
+cd /srv/Projetos/nexus-2.0/backend
+export PYTHONPATH="$(pwd):$PYTHONPATH"
+
+# Depois rodar
+cd /srv/Projetos/nexus-2.0
+pytest backend/tests/  ❌ ERRADO
+pytest tests/backend/  ✅ CERTO (com PYTHONPATH definido)
+
+# Ou use o script:
+./scripts/run_tests.sh --cov=app --cov-report=term
 ```
 
 ### PostgreSQL connection refused
@@ -473,10 +570,12 @@ sudo docker ps
 
 ## 📚 PRÓXIMAS ETAPAS
 
-1. ✅ Validar que tudo passou no checklist
-2. ⏭️ Começar Fase 2: CI/CD (Semana 4-5)
-3. ⏭️ Começar Fase 3: Documentação (Semana 6)
-4. ⏭️ Começar Fase 4: IA e Automação
+1. ✅ Clonar branch `develop` no servidor
+2. ✅ Validar que tudo passou no checklist
+3. ✅ Confirmar GitHub Actions passando
+4. ⏭️ Quando estável → Criar branch `main` para produção
+5. ⏭️ Configurar deploy contínuo com secrets do servidor
+6. ⏭️ Monitorar logs e alertas do Nexus
 
 ---
 
