@@ -1,0 +1,12 @@
+{
+  "name": "nexus-platform",
+  "version": "3.0.0",
+  "description": "Portable static frontend shell for Nexus Platform",
+  "scripts": {
+    "build": "echo Static frontend ready",
+    "serve": "npx http-server public -p 3000"
+  },
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  }
+}

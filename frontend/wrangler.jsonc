@@ -1,0 +1,4 @@
+{
+  "deprecated": true,
+  "message": "Cloudflare/Genspark deployment was removed from this workspace. Use docker/docker-compose.yml."
+}

@@ -1,0 +1,116 @@
+[MASTER]
+# Specify the number of processes to use when running jobs in parallel
+jobs=0
+
+# Control the amount of potential inferred values when inferring with inference transformations
+inference-timeout=10
+
+# Minimum lines number d a file to be considered for several checks
+min-similarity-lines=4
+
+# Ignore comments when computing similarities
+ignore-imports=no
+
+# List of regexes of note tags to take in consideration
+notes=FIXME, XXX, TODO, HACK
+
+[MESSAGES CONTROL]
+# Only show warnings with the listed confidence levels
+confidence=
+
+# Disable the message, report, category or checker with the given id(s)
+disable=
+    missing-docstring,          # C0111
+    too-few-public-methods,     # R0903
+    too-many-arguments,         # R0913
+    logging-fstring-interpolation,  # W1203
+    invalid-name,               # C0103
+    duplicate-code,             # R0801
+    protected-access,           # W0212
+    line-too-long,              # C0301 (handled by black)
+    ungrouped-imports,          # C0412 (handled by isort)
+    wrong-import-order,         # C0411 (handled by isort)
+
+[REPORTS]
+# Set the output format
+output-format=colorized
+
+# Tells whether to display a full report or only the messages
+reports=yes
+
+# Activate the evaluation score
+score=yes
+
+[FORMAT]
+# Maximum number of characters on a single line
+max-line-length=100
+
+# Good variable names which should always be accepted
+good-names=i, j, k, ex, Run, _, db, id
+
+# Bad variable names which should always be refused
+bad-names=foo, bar, baz, toto, tutu, tata
+
+[VARIABLES]
+# A regular expression matching the name of dummy variables
+dummy-variables-rgx=_+$|(_[a-zA-Z0-9_]*[a-zA-Z0-9]+?$)|dummy|^ignored_|^unused_
+
+# List of additional names supposed to be defined in builtins
+additional-builtins=_
+
+[DESIGN]
+max-args=5
+max-attributes=7
+max-bool-expr=5
+max-branches=12
+max-locals=15
+max-parents=7
+max-public-methods=20
+max-returns=6
+max-statements=50
+min-public-methods=2
+
+[SIMILARITIES]
+# Minimum lines number d a file to be considered for several checks
+min-similarity-lines=4
+
+# Ignore comments when computing similarities
+ignore-comments=yes
+
+# Ignore docstrings when computing similarities
+ignore-docstrings=yes
+
+# Ignore imports when computing similarities
+ignore-imports=no
+
+[BASIC]
+# Good variable names which should always be accepted, separated by a comma
+good-names=i, j, k, ex, Run, _, db, id, x, y, z, df, f, e
+
+# Bad variable names which should always be refused, separated by a comma
+bad-names=foo, bar, baz, toto, tutu, tata
+
+# Naming style matching correct constant names
+const-naming-style=UPPER_CASE
+
+# Regular expression matching correct constant names
+const-rgx=(([A-Z_][A-Z0-9_]*)|(__.*__))$
+
+# Naming style matching correct class names
+class-naming-style=PascalCase
+
+# Naming style matching correct function names
+function-naming-style=snake_case
+
+# Naming style matching correct method names
+method-naming-style=snake_case
+
+# Naming style matching correct module names
+module-naming-style=snake_case
+
+# Naming style matching correct variable names
+variable-naming-style=snake_case
+
+[LOGGING]
+# The type of string formatting that logging methods do
+logging-format-style=old

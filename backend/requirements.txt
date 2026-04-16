@@ -1,0 +1,79 @@
+# ─── Web Framework ──────────────────────────────────────────────
+fastapi
+uvicorn[standard]
+gunicorn
+
+# ─── Database ───────────────────────────────────────────────────
+sqlalchemy
+alembic
+asyncpg
+psycopg2-binary
+
+# ─── Cache / Message Broker ─────────────────────────────────────
+redis
+celery
+celery[redis]
+flower
+
+# ─── Auth & Security ────────────────────────────────────────────
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+pyotp
+
+# ─── HTTP Client (agents / synthetic tests / webhooks) ──────────
+httpx
+aiohttp
+
+# ─── AI / LLM ───────────────────────────────────────────────────
+openai
+anthropic
+google-generativeai
+langchain
+langchain-openai
+langchain-anthropic
+
+# ─── Time series / ML for baselines ─────────────────────────────
+numpy
+pandas
+scikit-learn
+scipy
+
+# ─── Observability / OTel ───────────────────────────────────────
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp
+
+# ─── SSL / Synthetic Tests ──────────────────────────────────────
+certifi
+cryptography
+playwright
+
+# ─── Email ──────────────────────────────────────────────────────
+aiosmtplib
+jinja2
+
+# ─── Cloud Integrations ─────────────────────────────────────────
+boto3
+azure-monitor-query
+google-cloud-monitoring
+
+# ─── K8s / VMware ───────────────────────────────────────────────
+kubernetes
+pyVmomi
+
+# ─── Utilities ──────────────────────────────────────────────────
+pydantic
+pydantic-settings
+python-dotenv
+apscheduler
+croniter
+pytz
+arrow
+rich
+typer
+prometheus-client
+psutil
+paramiko
+netmiko
+pysnmp

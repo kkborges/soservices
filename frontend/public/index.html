@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LAS Plataforma de Monitoramento e Observabilidade</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <section id="login-screen" class="login-screen">
+    <div class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">LAS Plataforma de Monitoramento e Observabilidade</p>
+        <h1>Operacao unificada para monitoramento, logs, traces, gateways e suporte.</h1>
+        <p class="muted">Interface baseada em dados reais da API. Sem mock de monitoramento, sem dependencia de Genspark e pronta para cloud ou ambiente on-premise.</p>
+      </div>
+      <img src="/assets/soservices-logo.png" alt="SOServices" class="hero-logo">
+    </div>
+    <form id="login-form" class="card form-card">
+      <h2>Acessar plataforma</h2>
+      <label>Usuario<input name="username" value="admin" required></label>
+      <label>Senha<input type="password" name="password" value="admin" required></label>
+      <p class="muted">Tenant demo: demo_las@soservices.com.br / admin</p>
+      <button class="button primary" type="submit">Entrar</button>
+      <p id="login-message" class="message"></p>
+    </form>
+  </section>
+
+  <section id="app-screen" class="app-screen hidden">
+    <aside class="sidebar">
+      <img src="/assets/soservices-logo.png" alt="SOServices" class="sidebar-logo">
+      <div class="brand-block">
+        <p class="eyebrow">LAS Plataforma</p>
+        <strong>Monitoramento e Observabilidade</strong>
+      </div>
+      <nav class="nav">
+        <button data-view="dashboard" class="nav-link active">Home</button>
+        <button data-view="hosts" class="nav-link">Hosts</button>
+        <button data-view="processes" class="nav-link">Processos</button>
+        <button data-view="services" class="nav-link">Servicos</button>
+        <button data-view="applications" class="nav-link">Aplicacoes</button>
+        <button data-view="topologies" class="nav-link">Topologias</button>
+        <button data-view="dashboards" class="nav-link">Dashboards</button>
+        <button data-view="databases" class="nav-link">Bancos de Dados</button>
+        <button data-view="messaging" class="nav-link">Mensageria</button>
+        <button data-view="orchestration" class="nav-link">Orquestracao</button>
+        <button data-view="synthetics" class="nav-link">Testes Sinteticos</button>
+        <button data-view="network" class="nav-link">Ativos de Rede</button>
+        <button data-view="security" class="nav-link">Seguranca</button>
+        <button data-view="incidents" class="nav-link">Problemas/Incidentes</button>
+        <button data-view="logs" class="nav-link">Logs</button>
+        <button data-view="traces" class="nav-link">Traces</button>
+        <button data-view="tickets" class="nav-link">Tickets</button>
+        <button data-view="integrations" class="nav-link">Integracoes</button>
+        <button data-view="tenants" class="nav-link">Tenants</button>
+        <button data-view="licensing" class="nav-link">Licencas</button>
+        <button data-view="settings" class="nav-link">Configuracoes Tenant</button>
+      </nav>
+      <div class="sidebar-footer">
+        <div id="user-summary" class="muted"></div>
+        <button id="logout-button" class="button ghost" type="button">Sair</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">LAS Plataforma</p>
+          <h1 id="view-title">Dashboard</h1>
+        </div>
+        <div class="topbar-actions">
+          <span id="api-status" class="tag">API</span>
+          <a class="button ghost" href="/docs/cliente-validacao.html" target="_blank" rel="noreferrer">Docs</a>
+          <a class="button ghost" href="/api/health" target="_blank" rel="noreferrer">Health</a>
+        </div>
+      </header>
+      <div id="app-content" class="content"></div>
+    </main>
+  </section>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

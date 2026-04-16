@@ -1,0 +1,180 @@
+version: "3.9"
+
+networks:
+  las-net:
+    external: true
+
+volumes:
+  pg_0_data:
+  pg_1_data:
+  redis_0_data:
+  redis_1_data:
+  redis_2_data:
+
+services:
+  pg-0:
+    image: bitnamilegacy/postgresql-repmgr:latest
+    container_name: pg-0
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRESQL_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus_password_change_me}
+      POSTGRESQL_USERNAME: ${POSTGRES_USER:-nexus}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-nexus_password_change_me}
+      POSTGRESQL_DATABASE: ${POSTGRES_DB:-nexus}
+      REPMGR_PASSWORD: ${REPMGR_PASSWORD:-repmgr_password_change_me}
+      REPMGR_PRIMARY_HOST: pg-0
+      REPMGR_PARTNER_NODES: pg-0,pg-1
+      REPMGR_NODE_NAME: pg-0
+      REPMGR_NODE_NETWORK_NAME: pg-0
+    volumes:
+      - pg_0_data:/bitnami/postgresql
+    networks:
+      - las-net
+
+  pg-1:
+    image: bitnamilegacy/postgresql-repmgr:latest
+    container_name: pg-1
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRESQL_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus_password_change_me}
+      POSTGRESQL_USERNAME: ${POSTGRES_USER:-nexus}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-nexus_password_change_me}
+      POSTGRESQL_DATABASE: ${POSTGRES_DB:-nexus}
+      REPMGR_PASSWORD: ${REPMGR_PASSWORD:-repmgr_password_change_me}
+      REPMGR_PRIMARY_HOST: pg-0
+      REPMGR_PARTNER_NODES: pg-0,pg-1
+      REPMGR_NODE_NAME: pg-1
+      REPMGR_NODE_NETWORK_NAME: pg-1
+    volumes:
+      - pg_1_data:/bitnami/postgresql
+    networks:
+      - las-net
+    depends_on:
+      - pg-0
+
+  pgpool:
+    image: bitnamilegacy/pgpool:latest
+    container_name: pgpool
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PGPOOL_BACKEND_NODES: 0:pg-0:5432,1:pg-1:5432
+      PGPOOL_SR_CHECK_USER: repmgr
+      PGPOOL_SR_CHECK_PASSWORD: ${REPMGR_PASSWORD:-repmgr_password_change_me}
+      PGPOOL_POSTGRES_USERNAME: postgres
+      PGPOOL_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus_password_change_me}
+      PGPOOL_ADMIN_USERNAME: ${PGPOOL_ADMIN_USERNAME:-admin}
+      PGPOOL_ADMIN_PASSWORD: ${PGPOOL_ADMIN_PASSWORD:-pgpool_admin_change_me}
+      PGPOOL_POSTGRES_CUSTOM_USERS: ${POSTGRES_USER:-nexus}
+      PGPOOL_POSTGRES_CUSTOM_PASSWORDS: ${POSTGRES_PASSWORD:-nexus_password_change_me}
+      PGPOOL_ENABLE_LOAD_BALANCING: "no"
+      PGPOOL_PARAMS_FAILOVER_ON_BACKEND_ERROR: "on"
+      PGPOOL_PARAMS_FAILOVER_ON_BACKEND_SHUTDOWN: "on"
+    networks:
+      - las-net
+    depends_on:
+      - pg-0
+      - pg-1
+    ports:
+      - "5433:5432"
+
+  redis-node-0:
+    image: redis:7-alpine
+    container_name: redis-node-0
+    restart: unless-stopped
+    command: >
+      sh -c "redis-server --appendonly yes --requirepass '${REDIS_PASSWORD:-redis_password}'"
+    volumes:
+      - redis_0_data:/data
+    networks:
+      - las-net
+
+  redis-node-1:
+    image: redis:7-alpine
+    container_name: redis-node-1
+    restart: unless-stopped
+    command: >
+      sh -c "redis-server --appendonly yes --requirepass '${REDIS_PASSWORD:-redis_password}' --masterauth '${REDIS_PASSWORD:-redis_password}' --replicaof redis-node-0 6379"
+    volumes:
+      - redis_1_data:/data
+    networks:
+      - las-net
+    depends_on:
+      - redis-node-0
+
+  redis-node-2:
+    image: redis:7-alpine
+    container_name: redis-node-2
+    restart: unless-stopped
+    command: >
+      sh -c "redis-server --appendonly yes --requirepass '${REDIS_PASSWORD:-redis_password}' --masterauth '${REDIS_PASSWORD:-redis_password}' --replicaof redis-node-0 6379"
+    volumes:
+      - redis_2_data:/data
+    networks:
+      - las-net
+    depends_on:
+      - redis-node-0
+
+  redis-sentinel-0:
+    image: redis:7-alpine
+    container_name: redis-sentinel-0
+    restart: unless-stopped
+    command: >
+      sh -c "printf 'port 26379\nbind 0.0.0.0\nsentinel monitor lasmaster redis-node-0 6379 2\nsentinel auth-pass lasmaster ${REDIS_PASSWORD:-redis_password}\nsentinel down-after-milliseconds lasmaster 5000\nsentinel failover-timeout lasmaster 10000\nsentinel parallel-syncs lasmaster 1\nsentinel resolve-hostnames yes\n' > /tmp/sentinel.conf && redis-server /tmp/sentinel.conf --sentinel"
+    networks:
+      - las-net
+    depends_on:
+      - redis-node-0
+      - redis-node-1
+      - redis-node-2
+
+  redis-sentinel-1:
+    image: redis:7-alpine
+    container_name: redis-sentinel-1
+    restart: unless-stopped
+    command: >
+      sh -c "printf 'port 26379\nbind 0.0.0.0\nsentinel monitor lasmaster redis-node-0 6379 2\nsentinel auth-pass lasmaster ${REDIS_PASSWORD:-redis_password}\nsentinel down-after-milliseconds lasmaster 5000\nsentinel failover-timeout lasmaster 10000\nsentinel parallel-syncs lasmaster 1\nsentinel resolve-hostnames yes\n' > /tmp/sentinel.conf && redis-server /tmp/sentinel.conf --sentinel"
+    networks:
+      - las-net
+    depends_on:
+      - redis-node-0
+      - redis-node-1
+      - redis-node-2
+
+  redis-sentinel-2:
+    image: redis:7-alpine
+    container_name: redis-sentinel-2
+    restart: unless-stopped
+    command: >
+      sh -c "printf 'port 26379\nbind 0.0.0.0\nsentinel monitor lasmaster redis-node-0 6379 2\nsentinel auth-pass lasmaster ${REDIS_PASSWORD:-redis_password}\nsentinel down-after-milliseconds lasmaster 5000\nsentinel failover-timeout lasmaster 10000\nsentinel parallel-syncs lasmaster 1\nsentinel resolve-hostnames yes\n' > /tmp/sentinel.conf && redis-server /tmp/sentinel.conf --sentinel"
+    networks:
+      - las-net
+    depends_on:
+      - redis-node-0
+      - redis-node-1
+      - redis-node-2
+
+  redis-haproxy:
+    image: haproxy:2.9-alpine
+    container_name: redis-haproxy
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: >
+      sh -c "printf 'global\n    log stdout format raw local0\n    maxconn 4096\n\ndefaults\n    mode tcp\n    timeout connect 5s\n    timeout client 60s\n    timeout server 60s\n    log global\n\nfrontend redis_front\n    bind *:6379\n    default_backend redis_master\n\nbackend redis_master\n    option tcp-check\n    tcp-check connect\n    tcp-check send AUTH\\ ${REDIS_PASSWORD}\\r\\n\n    tcp-check expect string +OK\n    tcp-check send INFO\\ replication\\r\\n\n    tcp-check expect string role:master\n    tcp-check send QUIT\\r\\n\n    tcp-check expect string +OK\n    server redis-node-0 redis-node-0:6379 check inter 2s fall 2 rise 1\n    server redis-node-1 redis-node-1:6379 check inter 2s fall 2 rise 1\n    server redis-node-2 redis-node-2:6379 check inter 2s fall 2 rise 1\n' > /tmp/haproxy.cfg && haproxy -f /tmp/haproxy.cfg"
+    networks:
+      - las-net
+    depends_on:
+      - redis-node-0
+      - redis-node-1
+      - redis-node-2
+      - redis-sentinel-0
+      - redis-sentinel-1
+      - redis-sentinel-2
+    ports:
+      - "6380:6379"
