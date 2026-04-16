@@ -163,13 +163,16 @@ def auth_headers(valid_jwt_token):
 # === HTTP Client Fixtures ===
 
 @pytest.fixture
-async def async_client():
+def async_client(event_loop):
     """Provide async HTTP client for API testing"""
     from httpx import AsyncClient
     from app.main import app
     
-    async with AsyncClient(app=app, base_url="http://test") as client:
-        yield client
+    async def _get_client():
+        return AsyncClient(app=app, base_url="http://test")
+    
+    client = event_loop.run_until_complete(_get_client())
+    yield client
 
 
 @pytest.fixture
