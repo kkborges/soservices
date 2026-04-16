@@ -1,9 +1,5 @@
-"""
-Pytest configuration file
-Run tests with: pytest
-"""
-
 # ====== PYTEST CONFIGURATION ======
+# Run tests with: pytest
 
 [tool.pytest.ini_options]
 testpaths = ["tests/backend"]
