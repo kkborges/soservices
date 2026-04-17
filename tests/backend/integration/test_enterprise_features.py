@@ -437,7 +437,7 @@ class TestDistributedTracingService:
         # Create some spans
         for i in range(3):
             span_id = tracing_service.start_span(trace_id, f"operation_{i}")
-            asyncio.sleep(0.01)
+            await asyncio.sleep(0.01)
             tracing_service.end_span(span_id)
         
         tracing_service.end_trace(trace_id)
