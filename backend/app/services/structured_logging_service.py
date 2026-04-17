@@ -221,13 +221,16 @@ class StructuredLoggingService:
     ) -> StructuredLogEntry:
         """Create structured log entry"""
         
+        # Extract request_id from kwargs if present to avoid duplicate argument
+        request_id = kwargs.pop("request_id", self._context.get("request_id", ""))
+        
         entry = StructuredLogEntry(
             timestamp=datetime.utcnow().isoformat(),
             level=level.value,
             category=category.value,
             message=message,
             correlation_id=self._context.get("correlation_id", str(uuid4())),
-            request_id=self._context.get("request_id", ""),
+            request_id=request_id,
             trace_id=self._context.get("trace_id", str(uuid4())),
             service_name=self.service_name,
             service_version=self.service_version,
@@ -336,6 +339,9 @@ class StructuredLoggingService:
         """Log incoming request"""
         request_id = str(uuid4())
         
+        # Add query_params to metadata if present
+        metadata = {"query_params": query_params} if query_params else None
+        
         self.log(
             LogLevel.INFO,
             LogCategory.API,
@@ -343,7 +349,7 @@ class StructuredLoggingService:
             request_id=request_id,
             method=method,
             path=path,
-            query_params=query_params
+            metadata=metadata
         )
         
         self._context["request_id"] = request_id
