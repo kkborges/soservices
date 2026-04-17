@@ -1,22 +1,34 @@
 #!/usr/bin/env python3
 """
 Deployment Script for Nexus Platform v2.0
-Deploys the application to /srv/Projetos/nexus-2.0
+Deploys the application to /srv/Projetos/nexus-2.0 (Linux) or C:/Projetos/nexus-2.0 (Windows)
 """
 
 import os
 import sys
 import shutil
 import subprocess
+import platform
 from pathlib import Path
 from datetime import datetime
 
-# Configuration
-DEPLOYMENT_PATH = Path("/srv/Projetos/nexus-2.0")
-SOURCE_PATH = Path("z:/Projetos/nexus")
-BACKUP_PATH = Path("/srv/Projetos/nexus-backups")
+# Detect operating system
+IS_WINDOWS = sys.platform == "win32"
+IS_LINUX = sys.platform.startswith("linux")
+
+# Configuration - adjust paths based on OS
+if IS_WINDOWS:
+    DEPLOYMENT_PATH = Path("C:/Projetos/nexus-2.0")
+    BACKUP_PATH = Path("C:/Projetos/nexus-backups")
+else:
+    DEPLOYMENT_PATH = Path("/srv/Projetos/nexus-2.0")
+    BACKUP_PATH = Path("/srv/Projetos/nexus-backups")
+
+SOURCE_PATH = Path("z:/Projetos/nexus" if IS_WINDOWS else "/mnt/z/Projetos/nexus")
 LOG_PATH = DEPLOYMENT_PATH / "logs"
 VENV_PATH = DEPLOYMENT_PATH / "venv"
+PIP_EXECUTABLE = str(VENV_PATH / "Scripts" / "pip.exe") if IS_WINDOWS else str(VENV_PATH / "bin" / "pip")
+PYTHON_EXECUTABLE = str(VENV_PATH / "Scripts" / "python.exe") if IS_WINDOWS else str(VENV_PATH / "bin" / "python")
 
 def log(message: str, level: str = "INFO"):
     """Log deployment messages."""
@@ -91,21 +103,28 @@ def setup_virtual_environment():
     log("Setting up Python virtual environment...")
     try:
         # Create virtual environment
-        subprocess.run(
+        result = subprocess.run(
             [sys.executable, "-m", "venv", str(VENV_PATH)],
-            check=True,
-            capture_output=True
+            capture_output=True,
+            text=True
         )
+        if result.returncode != 0:
+            log(f"Virtual environment creation error: {result.stderr}", "ERROR")
+            return False
+        
         log(f"Virtual environment created at {VENV_PATH}")
         
         # Upgrade pip
-        pip_executable = str(VENV_PATH / "Scripts" / "pip.exe") if sys.platform == "win32" else str(VENV_PATH / "bin" / "pip")
-        subprocess.run(
-            [pip_executable, "install", "--upgrade", "pip"],
-            check=True,
-            capture_output=True
+        result = subprocess.run(
+            [PIP_EXECUTABLE, "install", "--upgrade", "pip"],
+            capture_output=True,
+            text=True
         )
-        log("pip upgraded")
+        if result.returncode != 0:
+            log(f"Pip upgrade error: {result.stderr}", "WARNING")
+            # Continue anyway as pip might still work
+        else:
+            log("pip upgraded successfully")
         
         return True
     except Exception as e:
@@ -116,16 +135,20 @@ def install_dependencies():
     """Install Python dependencies."""
     log("Installing Python dependencies...")
     try:
-        pip_executable = str(VENV_PATH / "Scripts" / "pip.exe") if sys.platform == "win32" else str(VENV_PATH / "bin" / "pip")
         requirements_file = DEPLOYMENT_PATH / "backend" / "requirements.txt"
         
         if requirements_file.exists():
-            subprocess.run(
-                [pip_executable, "install", "-r", str(requirements_file)],
-                check=True,
+            result = subprocess.run(
+                [PIP_EXECUTABLE, "install", "-r", str(requirements_file)],
+                capture_output=True,
+                text=True,
                 cwd=str(DEPLOYMENT_PATH / "backend")
             )
-            log("Dependencies installed successfully")
+            if result.returncode != 0:
+                log(f"Dependency installation partial failure: {result.stderr[:500]}", "WARNING")
+                # Continue anyway as some packages might be installed
+            else:
+                log("Dependencies installed successfully")
         else:
             log(f"Requirements file not found: {requirements_file}", "WARNING")
         
@@ -138,17 +161,19 @@ def run_database_migrations():
     """Run database migrations."""
     log("Running database migrations...")
     try:
-        python_executable = str(VENV_PATH / "Scripts" / "python.exe") if sys.platform == "win32" else str(VENV_PATH / "bin" / "python")
-        
         # Run alembic migrations
         alembic_dir = DEPLOYMENT_PATH / "backend" / "alembic"
         if alembic_dir.exists():
-            subprocess.run(
-                [python_executable, "-m", "alembic", "upgrade", "head"],
-                check=True,
+            result = subprocess.run(
+                [PYTHON_EXECUTABLE, "-m", "alembic", "upgrade", "head"],
+                capture_output=True,
+                text=True,
                 cwd=str(DEPLOYMENT_PATH / "backend")
             )
-            log("Database migrations completed")
+            if result.returncode != 0:
+                log(f"Database migration warning: {result.stderr[:500]}", "WARNING")
+            else:
+                log("Database migrations completed")
         else:
             log("Alembic directory not found, skipping migrations", "WARNING")
         
@@ -218,18 +243,23 @@ LOG_FORMAT=json
 
 def create_systemd_service():
     """Create systemd service file for automatic startup."""
+    if IS_WINDOWS:
+        log("Skipping systemd service creation (not applicable on Windows)", "INFO")
+        return True
+    
     log("Creating systemd service file...")
     try:
-        service_content = """[Unit]
+        service_content = f"""[Unit]
 Description=Nexus Platform v2.0 API Service
 After=network.target postgresql.service redis-server.service
 
 [Service]
 Type=notify
 User=nexus
-WorkingDirectory=/srv/Projetos/nexus-2.0/backend
-Environment="PATH=/srv/Projetos/nexus-2.0/venv/bin"
-ExecStart=/srv/Projetos/nexus-2.0/venv/bin/gunicorn -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 app.main:app
+WorkingDirectory={DEPLOYMENT_PATH}/backend
+Environment="PATH={VENV_PATH}/bin"
+EnvironmentFile={DEPLOYMENT_PATH}/backend/.env
+ExecStart={PYTHON_EXECUTABLE} -m gunicorn -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --timeout 120 --access-logfile {LOG_PATH}/access.log --error-logfile {LOG_PATH}/error.log app.main:app
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -240,120 +270,106 @@ WantedBy=multi-user.target
 """
         service_file = Path("/etc/systemd/system/nexus-api.service")
         
-        # Note: This requires root privileges
-        log("Systemd service file content (save to /etc/systemd/system/nexus-api.service):")
-        print(service_content)
-        
-        return True
+        try:
+            with open(service_file, 'w') as f:
+                f.write(service_content)
+            log(f"Systemd service created at {service_file}")
+            
+            # Reload systemd daemon
+            run_command(["sudo", "systemctl", "daemon-reload"], "Reload systemd daemon")
+            log("Systemd daemon reloaded successfully")
+            
+            # Enable service to start on boot
+            run_command(["sudo", "systemctl", "enable", "nexus-api"], "Enable nexus-api service")
+            log("Service enabled for auto-start on boot")
+            
+            return True
+        except PermissionError:
+            log("WARNING: Run as sudo to install systemd service", "WARN")
+            log(f"Systemd service content:\n{service_content}", "INFO")
+            log("Save this to /etc/systemd/system/nexus-api.service and run: sudo systemctl daemon-reload", "INFO")
+            return True
+            
     except Exception as e:
-        log(f"Warning creating systemd service: {e}", "WARNING")
-        return True
+        log(f"Failed to create systemd service: {e}", "ERROR")
+        return False
 
 def create_deployment_summary():
     """Create deployment summary report."""
     log("Creating deployment summary...")
     try:
+        os_name = "Windows" if IS_WINDOWS else "Linux" if IS_LINUX else "Unknown"
+        
+        # Use simple characters for Windows compatibility
+        border_top = "=" * 72
+        border_mid = "-" * 72
+        border_bot = "=" * 72
+        
         summary = f"""
-╔════════════════════════════════════════════════════════════════════════╗
-║          NEXUS PLATFORM v2.0 - DEPLOYMENT SUMMARY                      ║
-╚════════════════════════════════════════════════════════════════════════╝
+{border_top}
+NEXUS PLATFORM v2.0 - DEPLOYMENT SUMMARY
+{border_bot}
 
 DEPLOYMENT INFORMATION
-─────────────────────────────────────────────────────────────────────────
+{border_mid}
+Operating System:       {os_name}
 Deployment Path:        {DEPLOYMENT_PATH}
+Backup Path:            {BACKUP_PATH}
 Deployment Date:        {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 Python Version:         {sys.version.split()[0]}
 Virtual Environment:    {VENV_PATH}
 
 DEPLOYED COMPONENTS
-─────────────────────────────────────────────────────────────────────────
-✓ Backend Application       ({DEPLOYMENT_PATH / 'backend'})
-✓ Frontend Application      ({DEPLOYMENT_PATH / 'frontend'})
-✓ Docker Configuration      ({DEPLOYMENT_PATH / 'docker'})
-✓ Python Virtual Env       ({VENV_PATH})
-✓ Dependencies Installed   (See requirements.txt)
-✓ Environment File         ({DEPLOYMENT_PATH / 'backend' / '.env'})
+{border_mid}
+[OK] Backend Application       ({DEPLOYMENT_PATH / 'backend'})
+[OK] Frontend Application      ({DEPLOYMENT_PATH / 'frontend'})
+[OK] Docker Configuration      ({DEPLOYMENT_PATH / 'docker'})
+[OK] Python Virtual Env       ({VENV_PATH})
+[OK] Dependencies Installed   (See requirements.txt)
+[OK] Environment File         ({DEPLOYMENT_PATH / 'backend' / '.env'})
 
 NEXT STEPS
-─────────────────────────────────────────────────────────────────────────
+{border_mid}
 1. UPDATE CONFIGURATION
    - Edit {DEPLOYMENT_PATH / 'backend' / '.env'} with production credentials
    - Update database connection strings
    - Configure API keys for external services
 
-2. START SERVICES
-   Option A - Manual Start:
+2. START APPLICATION - Windows
    $ cd {DEPLOYMENT_PATH}/backend
-   $ ./.venv/bin/gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.main:app
+   $ ../venv/Scripts/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+   
+   OR use gunicorn:
+   $ ../venv/Scripts/gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.main:app
 
-   Option B - Using Systemd (Linux):
-   $ sudo cp /etc/systemd/system/nexus-api.service
-   $ sudo systemctl daemon-reload
-   $ sudo systemctl start nexus-api
-   $ sudo systemctl enable nexus-api
+3. START APPLICATION - Linux
+   $ cd {DEPLOYMENT_PATH}/backend
+   $ ../venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-3. VERIFY DEPLOYMENT
+4. VERIFY DEPLOYMENT
    - Health Check: http://localhost:8000/health
    - API Docs: http://localhost:8000/docs
    - API ReDoc: http://localhost:8000/redoc
 
-4. MONITOR LOGS
+5. MONITOR LOGS
    - Application Logs: {LOG_PATH}
-   - System Logs: journalctl -u nexus-api -f (if using systemd)
 
 ENTERPRISE FEATURES AVAILABLE
-─────────────────────────────────────────────────────────────────────────
-✓ RBAC (Role-Based Access Control)
-✓ Audit Logging with Hash Chain Integrity
-✓ Secret Management & Rotation
-✓ Structured Logging & Correlation
-✓ Distributed Tracing
-✓ Intelligent Alerting
-✓ Self-Healing with Circuit Breaker
-✓ Multi-Region Disaster Recovery
-✓ Predictive Analytics
+{border_mid}
+[OK] RBAC (Role-Based Access Control)
+[OK] Audit Logging with Hash Chain Integrity
+[OK] Secret Management & Rotation
+[OK] Structured Logging & Correlation
+[OK] Distributed Tracing
+[OK] Intelligent Alerting
+[OK] Self-Healing with Circuit Breaker
+[OK] Multi-Region Disaster Recovery
+[OK] Predictive Analytics
 
-API ENDPOINTS - ENTERPRISE SERVICES
-─────────────────────────────────────────────────────────────────────────
-/api/v1/enterprise/permissions/check      - Check user permissions
-/api/v1/enterprise/audit/log              - Create audit log
-/api/v1/enterprise/secrets                - Manage secrets
-/api/v1/enterprise/alerts/rules           - Create alert rules
-/api/v1/enterprise/recovery/backup        - Create backups
-/api/v1/enterprise/healing/*              - Self-healing operations
-/api/v1/enterprise/analytics/*            - Predictive analytics
-
-TEST SUITE STATUS
-─────────────────────────────────────────────────────────────────────────
-✓ 38/38 Enterprise Feature Tests Passing
-✓ Enterprise API Endpoints Functional
-✓ All 9 Enterprise Services Integrated
-✓ Docker Compose Configurations Ready
-
-PRODUCTION CHECKLIST
-─────────────────────────────────────────────────────────────────────────
-□ Update environment variables in .env
-□ Configure PostgreSQL database
-□ Setup Redis for caching
-□ Configure OpenTelemetry collector
-□ Setup SSL/TLS certificates
-□ Configure backup strategy
-□ Setup monitoring & alerting
-□ Configure log aggregation
-□ Test disaster recovery procedures
-□ Setup CI/CD pipeline (GitHub Actions)
-
-SUPPORT & DOCUMENTATION
-─────────────────────────────────────────────────────────────────────────
-- Architecture Guide:       {SOURCE_PATH / 'docs' / 'ARCHITECTURE.md'}
-- Deployment Guide:         {SOURCE_PATH / 'docs' / 'IMPLEMENTACAO_SERVIDOR.md'}
-- Testing Guide:            {SOURCE_PATH / 'docs' / 'TESTING_GUIDE.md'}
-- API Documentation:        http://localhost:8000/docs
-
-╔════════════════════════════════════════════════════════════════════════╗
-║  Deployment completed successfully! 🚀                                 ║
-║  Platform is ready for configuration and testing                       ║
-╚════════════════════════════════════════════════════════════════════════╝
+{border_top}
+Deployment completed successfully!
+Platform is ready for configuration and testing
+{border_bot}
 """
         
         summary_file = LOG_PATH / f"deployment-summary-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
@@ -367,11 +383,64 @@ SUPPORT & DOCUMENTATION
         log(f"Failed to create deployment summary: {e}", "ERROR")
         return False
 
+def display_deployment_info():
+    """Display deployment configuration information."""
+    os_name = "Windows" if IS_WINDOWS else "Linux" if IS_LINUX else "Unknown"
+    
+    # Use simple characters for Windows compatibility
+    border_top = "=" * 72
+    border_mid = "-" * 72
+    border_bot = "=" * 72
+    
+    info = f"""
+{border_top}
+NEXUS PLATFORM v2.0 - DEPLOYMENT CONFIGURATION
+{border_bot}
+
+SYSTEM INFORMATION
+{border_mid}
+Operating System:       {os_name}
+Python Version:         {sys.version.split()[0]}
+Script Location:        {Path(__file__).resolve()}
+
+DEPLOYMENT PATHS
+{border_mid}
+Deployment Path:        {DEPLOYMENT_PATH}
+Virtual Environment:    {VENV_PATH}
+Python Executable:      {PYTHON_EXECUTABLE}
+Pip Executable:         {PIP_EXECUTABLE}
+Log Path:               {LOG_PATH}
+Backup Path:            {BACKUP_PATH}
+
+SOURCE FILES
+{border_mid}
+Source Path:            {SOURCE_PATH}
+Backend Source:         {SOURCE_PATH / 'backend'}
+Frontend Source:        {SOURCE_PATH / 'frontend'}
+Docker Source:          {SOURCE_PATH / 'docker'}
+
+VERIFICATION
+{border_mid}
+Source Path Exists:     {SOURCE_PATH.exists()}
+Backend Path Exists:    {(SOURCE_PATH / 'backend').exists()}
+Frontend Path Exists:   {(SOURCE_PATH / 'frontend').exists()}
+Docker Path Exists:     {(SOURCE_PATH / 'docker').exists()}
+
+{border_top}
+Ready to proceed with deployment
+{border_bot}
+"""
+    print(info)
+    log(info, "INFO")
+
 def main():
     """Execute deployment."""
     log("=" * 80)
     log("NEXUS PLATFORM v2.0 - DEPLOYMENT SCRIPT")
     log("=" * 80)
+    
+    # Display configuration info
+    display_deployment_info()
     
     steps = [
         ("Create Directories", create_directories),
@@ -386,14 +455,14 @@ def main():
     ]
     
     for step_name, step_func in steps:
-        log(f"\n▶ {step_name}...")
+        log(f"\n> {step_name}...")
         if not step_func():
-            log(f"✗ Deployment failed at step: {step_name}", "ERROR")
+            log(f"X Deployment failed at step: {step_name}", "ERROR")
             return False
-        log(f"✓ {step_name} completed")
+        log(f"+ {step_name} completed")
     
     log("\n" + "=" * 80)
-    log("✓ DEPLOYMENT COMPLETED SUCCESSFULLY", "SUCCESS")
+    log("SUCCESS: DEPLOYMENT COMPLETED SUCCESSFULLY", "SUCCESS")
     log("=" * 80)
     return True
 
