@@ -13,6 +13,68 @@ from app.models import AgentToken, Gateway, Tenant
 from app.core.config import settings
 
 
+def _as_ini_bool(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def _normalize_modules(modules: Optional[list]) -> list[str]:
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for module in modules or ["infra", "processes", "services", "logs"]:
+        item = str(module).strip().lower().replace("-", "_")
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        normalized.append(item)
+    if "logs" not in seen:
+        normalized.append("logs")
+    return normalized
+
+
+def _agent_features(modules: Optional[list]) -> tuple[list[str], dict[str, bool]]:
+    normalized = _normalize_modules(modules)
+    module_set = set(normalized)
+    features = {
+        "process_monitor": "processes" in module_set or "infra" in module_set,
+        "service_monitor": "services" in module_set,
+        "port_scan": "infra" in module_set,
+        "disk_monitor": "infra" in module_set,
+        "network_monitor": "infra" in module_set,
+        "log_collection": True,
+        "otel_enabled": "otel" in module_set or "traces" in module_set,
+        "traces_enabled": "traces" in module_set,
+        "rum_enabled": "rum" in module_set,
+        "ids_enabled": "ids" in module_set,
+        "vuln_scan_enabled": "vuln_scan" in module_set,
+        "apm_enabled": "otel" in module_set or "traces" in module_set,
+    }
+    return normalized, features
+
+
+def _gateway_features(gateway_config: Optional[dict]) -> dict[str, bool]:
+    modules = (gateway_config or {}).get("modules") or {}
+    if not modules:
+        modules = {
+            "agent_proxy": True,
+            "logs": True,
+            "otel": True,
+            "traces": True,
+            "rum": True,
+            "integrations": False,
+            "database": False,
+            "messaging": False,
+            "itsm": False,
+            "webhooks": False,
+            "security": False,
+            "ids": False,
+            "pentest": False,
+            "network_discovery": False,
+            "snmp": False,
+            "syslog": False,
+        }
+    return {key: bool(value) for key, value in modules.items()}
+
+
 def _generate_token(prefix: str, length: int = 48) -> str:
     """Generate a secure token with prefix: nxa_<random> or nxg_<random>"""
     alphabet = string.ascii_letters + string.digits
@@ -386,7 +448,16 @@ echo ""
 """
 
 
-def build_docker_compose(platform_url: str, token: str) -> str:
+def build_docker_compose(
+    platform_url: str,
+    token: str,
+    role: str = "agent",
+    modules: list = None,
+    gateway_urls: Optional[list[str]] = None,
+) -> str:
+    modules, features = _agent_features(modules)
+    modules_str = ",".join(modules)
+    gateway_urls_str = ",".join(gateway_urls or [])
     return f"""version: '3.8'
 services:
   nexus-agent:
@@ -399,8 +470,8 @@ services:
       NEXUS_URL: "{platform_url}"
       MTLS_PLATFORM_URL: "{settings.MTLS_PLATFORM_URL}"
       NEXUS_TOKEN: "{token}"
-      NEXUS_ROLE: "agent"
-      NEXUS_MODULES: "infra,logs,otel"
+      NEXUS_ROLE: "{role}"
+      NEXUS_MODULES: "{modules_str}"
       NEXUS_CONFIG: "/etc/las/agent.conf"
     volumes:
       - nexus-agent-data:/opt/las
@@ -425,8 +496,8 @@ services:
         "[nexus]" \
         "nexus_url = {platform_url}" \
         "agent_token = {token}" \
-        "role = agent" \
-        "modules = infra,logs,otel" \
+        "role = {role}" \
+        "modules = {modules_str}" \
         "log_dir = /var/log/las" \
         "install_dir = /opt/las" \
         "" \
@@ -435,14 +506,14 @@ services:
         "metrics_interval = 30" \
         "" \
         "[routing]" \
-        "gateway_urls =" \
+        "gateway_urls = {gateway_urls_str}" \
         "routing_refresh_interval = 300" \
         "gateway_strategy = priority-weighted-failover" \
         "" \
         "[mtls]" \
         "enabled = true" \
         "required = true" \
-        "platform_url = {settings.MTLS_PLATFORM_URL}" \
+        "platform_url = __MTLS_PLATFORM_URL__" \
         "ca_file = /etc/las/mtls-ca.pem" \
         "client_cert_file = /etc/las/mtls-client.pem" \
         "client_key_file = /etc/las/mtls-client-key.pem" \
@@ -453,24 +524,61 @@ services:
         "protection = mtls" \
         "" \
         "[features]" \
-        "process_monitor = true" \
-        "port_scan = true" \
-        "disk_monitor = true" \
-        "network_monitor = true" \
-        "log_collection = true" \
-        "otel_enabled = true" \
-        "ids_enabled = false" \
-        "vuln_scan_enabled = false" \
-        "apm_enabled = false" \
+        "process_monitor = {_as_ini_bool(features["process_monitor"])}" \
+        "service_monitor = {_as_ini_bool(features["service_monitor"])}" \
+        "port_scan = {_as_ini_bool(features["port_scan"])}" \
+        "disk_monitor = {_as_ini_bool(features["disk_monitor"])}" \
+        "network_monitor = {_as_ini_bool(features["network_monitor"])}" \
+        "log_collection = {_as_ini_bool(features["log_collection"])}" \
+        "otel_enabled = {_as_ini_bool(features["otel_enabled"])}" \
+        "traces_enabled = {_as_ini_bool(features["traces_enabled"])}" \
+        "rum_enabled = {_as_ini_bool(features["rum_enabled"])}" \
+        "ids_enabled = {_as_ini_bool(features["ids_enabled"])}" \
+        "vuln_scan_enabled = {_as_ini_bool(features["vuln_scan_enabled"])}" \
+        "apm_enabled = {_as_ini_bool(features["apm_enabled"])}" \
         "" \
         "[log_paths]" \
         "paths = /host/var/log/syslog,/host/var/log/auth.log,/host/var/log/nginx/*.log,/host/var/log/apache2/*.log" \
         > /etc/las/agent.conf
-      MTLS_JSON=$$(curl -fsSL "{settings.MTLS_PLATFORM_URL}/api/v1/agents/bootstrap/mtls?hostname=$$(hostname)" -H "Authorization: Bearer {token}")
+      # Bootstrap mTLS bundle via the public Platform URL (regular TLS). The CA obtained here is then used for the mTLS edge.
+      MTLS_JSON=$$(curl -fsSL "{platform_url}/api/v1/agents/bootstrap/mtls?hostname=$$(hostname)" -H "Authorization: Bearer {token}")
       export MTLS_JSON
-      python -c "import json, os, pathlib; p=json.loads(os.environ['MTLS_JSON']); b=pathlib.Path('/etc/las'); (b/'mtls-ca.pem').write_text(p['ca_pem'], encoding='ascii'); (b/'mtls-client.pem').write_text(p['client_cert_pem'], encoding='ascii'); (b/'mtls-client-key.pem').write_text(p['client_key_pem'], encoding='ascii')"
+      python -c "import json, os; from pathlib import Path; p=json.loads(os.environ['MTLS_JSON']); b=Path('/etc/las'); (b/'mtls-ca.pem').write_text(p['ca_pem'], encoding='ascii'); (b/'mtls-client.pem').write_text(p['client_cert_pem'], encoding='ascii'); (b/'mtls-client-key.pem').write_text(p['client_key_pem'], encoding='ascii'); mtls=p.get('mtls_platform_url') or '{settings.MTLS_PLATFORM_URL}'; conf=(b/'agent.conf'); conf.write_text(conf.read_text(encoding='utf-8').replace('__MTLS_PLATFORM_URL__', mtls), encoding='utf-8')"
+      MTLS_PLATFORM_URL=$$(python -c "import json, os; print(json.loads(os.environ['MTLS_JSON']).get('mtls_platform_url') or '')")
+      if [ -z "$$MTLS_PLATFORM_URL" ]; then MTLS_PLATFORM_URL="{settings.MTLS_PLATFORM_URL}"; fi
       echo "[LAS Agent] Baixando agente atualizado..."
-      curl -fsSL "{platform_url}/api/v1/agents/artifacts/linux-agent.py" -H "Authorization: Bearer {token}" -o /opt/las/las-agent.py
+      GW_URLS="{gateway_urls_str}"
+      DOWNLOADED="0"
+      if [ -n "$$GW_URLS" ]; then
+        OLDIFS="$$IFS"; IFS=','
+        for gw in $$GW_URLS; do
+          IFS="$$OLDIFS"
+          gw="$$(printf "%s" "$$gw" | sed "s/[[:space:]]//g" | sed "s#/*$##")"
+          if [ -z "$$gw" ]; then IFS=','; continue; fi
+          echo "[LAS Agent] Tentando baixar via gateway $$gw ..."
+          if curl -fL --retry 2 --retry-connrefused --connect-timeout 8 --max-time 60 --progress-bar \
+            --cacert /etc/las/mtls-ca.pem \
+            --cert /etc/las/mtls-client.pem \
+            --key /etc/las/mtls-client-key.pem \
+            "$$gw/api/v1/agents/artifacts/linux-agent.py" \
+            -o /opt/las/las-agent.py ; then
+            DOWNLOADED="1"
+            break
+          fi
+          IFS=','
+        done
+        IFS="$$OLDIFS"
+      fi
+      if [ "$$DOWNLOADED" != "1" ]; then
+        echo "[LAS Agent] Baixando via SaaS (mTLS edge) $$MTLS_PLATFORM_URL ..."
+        curl -fL --retry 3 --retry-connrefused --progress-bar \
+          --cacert /etc/las/mtls-ca.pem \
+          --cert /etc/las/mtls-client.pem \
+          --key /etc/las/mtls-client-key.pem \
+          "$$MTLS_PLATFORM_URL/api/v1/agents/artifacts/linux-agent.py" \
+          -H "Authorization: Bearer {token}" \
+          -o /opt/las/las-agent.py
+      fi
       echo "[LAS Agent] Iniciando coleta real de infra/logs/processos..."
       exec python /opt/las/las-agent.py'
     labels:
@@ -481,8 +589,22 @@ volumes:
 """
 
 
-def build_k8s_manifest(platform_url: str, token: str) -> str:
-    return f"""apiVersion: apps/v1
+def build_k8s_manifest(
+    platform_url: str,
+    token: str,
+    role: str = "k8s",
+    modules: list = None,
+    gateway_urls: Optional[list[str]] = None,
+) -> str:
+    modules, features = _agent_features(modules)
+    modules_str = ",".join(modules)
+    gateway_urls_str = ",".join(gateway_urls or [])
+    return f"""apiVersion: v1
+kind: Namespace
+metadata:
+  name: nexus-monitoring
+---
+apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: nexus-agent
@@ -507,14 +629,21 @@ spec:
           effect: NoSchedule
       containers:
         - name: nexus-agent
-          image: nexusplatform/agent:4.0
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
           env:
             - name: NEXUS_URL
               value: "{platform_url}"
+            - name: MTLS_PLATFORM_URL
+              value: "{settings.MTLS_PLATFORM_URL}"
             - name: NEXUS_TOKEN
               value: "{token}"
             - name: NEXUS_ROLE
-              value: "k8s"
+              value: "{role}"
+            - name: NEXUS_MODULES
+              value: "{modules_str}"
+            - name: NEXUS_CONFIG
+              value: "/etc/las/agent.conf"
             - name: NODE_NAME
               valueFrom:
                 fieldRef:
@@ -531,10 +660,110 @@ spec:
               mountPath: /host/sys
               readOnly: true
             - name: varlog
-              mountPath: /var/log
+              mountPath: /host/var/log
               readOnly: true
+            - name: las-config
+              mountPath: /etc/las
+            - name: las-data
+              mountPath: /opt/las
           securityContext:
             privileged: true
+          command: ["/bin/sh", "-lc"]
+          args:
+            - |
+              set -eu
+              export DEBIAN_FRONTEND=noninteractive
+              export PIP_ROOT_USER_ACTION=ignore
+              apt-get update -qq -o=Dpkg::Use-Pty=0
+              apt-get install -y -qq -o=Dpkg::Use-Pty=0 --no-install-recommends curl ca-certificates >/dev/null
+              python -m pip install --disable-pip-version-check --no-cache-dir -q psutil
+              mkdir -p /opt/las /etc/las /var/log/las
+              printf "%s\\n" \
+                "[nexus]" \
+                "nexus_url = {platform_url}" \
+                "agent_token = {token}" \
+                "role = {role}" \
+                "modules = {modules_str}" \
+                "log_dir = /var/log/las" \
+                "install_dir = /opt/las" \
+                "" \
+                "[intervals]" \
+                "heartbeat_interval = 60" \
+                "metrics_interval = 30" \
+                "" \
+                "[routing]" \
+                "gateway_urls = {gateway_urls_str}" \
+                "routing_refresh_interval = 300" \
+                "gateway_strategy = priority-weighted-failover" \
+                "" \
+                "[mtls]" \
+                "enabled = true" \
+                "required = true" \
+                "platform_url = __MTLS_PLATFORM_URL__" \
+                "ca_file = /etc/las/mtls-ca.pem" \
+                "client_cert_file = /etc/las/mtls-client.pem" \
+                "client_key_file = /etc/las/mtls-client-key.pem" \
+                "" \
+                "[transport]" \
+                "compress_data = true" \
+                "protect_data = true" \
+                "protection = mtls" \
+                "" \
+                "[features]" \
+                "process_monitor = {_as_ini_bool(features["process_monitor"])}" \
+                "service_monitor = {_as_ini_bool(features["service_monitor"])}" \
+                "port_scan = {_as_ini_bool(features["port_scan"])}" \
+                "disk_monitor = {_as_ini_bool(features["disk_monitor"])}" \
+                "network_monitor = {_as_ini_bool(features["network_monitor"])}" \
+                "log_collection = {_as_ini_bool(features["log_collection"])}" \
+                "otel_enabled = {_as_ini_bool(features["otel_enabled"])}" \
+                "traces_enabled = {_as_ini_bool(features["traces_enabled"])}" \
+                "rum_enabled = {_as_ini_bool(features["rum_enabled"])}" \
+                "ids_enabled = {_as_ini_bool(features["ids_enabled"])}" \
+                "vuln_scan_enabled = {_as_ini_bool(features["vuln_scan_enabled"])}" \
+                "apm_enabled = {_as_ini_bool(features["apm_enabled"])}" \
+                "" \
+                "[log_paths]" \
+                "paths = /host/var/log/syslog,/host/var/log/auth.log,/host/var/log/nginx/*.log,/host/var/log/apache2/*.log" \
+                > /etc/las/agent.conf
+              MTLS_JSON=$(curl -fsSL "{platform_url}/api/v1/agents/bootstrap/mtls?hostname=$(hostname)" -H "Authorization: Bearer {token}")
+              export MTLS_JSON
+              python -c "import json, os; from pathlib import Path; p=json.loads(os.environ['MTLS_JSON']); b=Path('/etc/las'); (b/'mtls-ca.pem').write_text(p['ca_pem'], encoding='ascii'); (b/'mtls-client.pem').write_text(p['client_cert_pem'], encoding='ascii'); (b/'mtls-client-key.pem').write_text(p['client_key_pem'], encoding='ascii'); mtls=p.get('mtls_platform_url') or '{settings.MTLS_PLATFORM_URL}'; conf=(b/'agent.conf'); conf.write_text(conf.read_text(encoding='utf-8').replace('__MTLS_PLATFORM_URL__', mtls), encoding='utf-8')"
+              MTLS_PLATFORM_URL=$(python -c "import json, os; print(json.loads(os.environ['MTLS_JSON']).get('mtls_platform_url') or '')")
+              if [ -z \"$MTLS_PLATFORM_URL\" ]; then MTLS_PLATFORM_URL=\"{settings.MTLS_PLATFORM_URL}\"; fi
+              GW_URLS="{gateway_urls_str}"
+              DOWNLOADED="0"
+              if [ -n \"$GW_URLS\" ]; then
+                OLDIFS=\"$IFS\"; IFS=','
+                for gw in $GW_URLS; do
+                  IFS=\"$OLDIFS\"
+                  gw=$(printf \"%s\" \"$gw\" | sed \"s/[[:space:]]//g\" | sed \"s#/*$##\")
+                  if [ -z \"$gw\" ]; then IFS=','; continue; fi
+                  echo \"[LAS Agent] Tentando baixar via gateway $gw ...\"
+                  if curl -fL --retry 2 --retry-connrefused --connect-timeout 8 --max-time 60 --progress-bar \
+                    --cacert /etc/las/mtls-ca.pem \
+                    --cert /etc/las/mtls-client.pem \
+                    --key /etc/las/mtls-client-key.pem \
+                    \"$gw/api/v1/agents/artifacts/linux-agent.py\" \
+                    -o /opt/las/las-agent.py ; then
+                    DOWNLOADED=\"1\"
+                    break
+                  fi
+                  IFS=','
+                done
+                IFS=\"$OLDIFS\"
+              fi
+              if [ \"$DOWNLOADED\" != \"1\" ]; then
+                echo \"[LAS Agent] Baixando via SaaS (mTLS edge) $MTLS_PLATFORM_URL ...\"
+                curl -fL --retry 3 --retry-connrefused --progress-bar \
+                  --cacert /etc/las/mtls-ca.pem \
+                  --cert /etc/las/mtls-client.pem \
+                  --key /etc/las/mtls-client-key.pem \
+                  \"$MTLS_PLATFORM_URL/api/v1/agents/artifacts/linux-agent.py\" \
+                  -H \"Authorization: Bearer {token}\" \
+                  -o /opt/las/las-agent.py
+              fi
+              exec python /opt/las/las-agent.py
       volumes:
         - name: proc
           hostPath:
@@ -545,16 +774,27 @@ spec:
         - name: varlog
           hostPath:
             path: /var/log
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: nexus-monitoring
+        - name: las-config
+          emptyDir: {{}}
+        - name: las-data
+          emptyDir: {{}}
 """
 
 
-def build_gateway_install_script(platform_url: str, token: str, gateway_type: str = "infra") -> str:
+def build_gateway_install_script(
+    platform_url: str,
+    token: str,
+    gateway_type: str = "agents",
+    gateway_config: Optional[dict] = None,
+) -> str:
     """Generate a Linux gateway installer with embedded token."""
+    features = _gateway_features(gateway_config)
+    syslog_config = (gateway_config or {}).get("syslog") or {}
+    syslog_enabled = bool(syslog_config.get("enabled", features.get("syslog", False)))
+    syslog_host = syslog_config.get("listen_host", "0.0.0.0")
+    syslog_udp_port = int(syslog_config.get("udp_port", 514))
+    syslog_tcp_port = int(syslog_config.get("tcp_port", 514))
+    syslog_tls_port = int(syslog_config.get("tls_port", 6514))
     return f"""#!/bin/bash
 set -e
 
@@ -684,7 +924,8 @@ def build_linux_install_script(
     gateway_urls: Optional[list[str]] = None,
 ) -> str:
     """Generate the Linux bash installer with embedded token."""
-    modules_str = ",".join(modules or ["infra", "logs", "otel"])
+    modules, features = _agent_features(modules)
+    modules_str = ",".join(modules)
     gateway_urls_str = ",".join(gateway_urls or [])
     return f"""#!/bin/bash
 set -e
@@ -752,6 +993,20 @@ detect_os() {{
     echo -e "Sistema detectado: ${{GREEN}}$OS${{NC}}"
 }}
 
+preflight_checks() {{
+    echo -e "${{YELLOW}}Executando pre-checks (disco e conectividade)...${{NC}}"
+    FREE_KB=$(df -Pk "$(dirname "$INSTALL_DIR")" | awk 'NR==2 {{print $4}}' || echo "0")
+    if [ "${{FREE_KB:-0}}" -lt 262144 ]; then
+        echo -e "${{RED}}Espaco em disco insuficiente. Necessario pelo menos 256MB livres.${{NC}}"
+        exit 1
+    fi
+    if ! curl -fsS --max-time 10 "$PLATFORM_URL/api/health" >/dev/null 2>&1; then
+        echo -e "${{RED}}Sem conectividade com a plataforma ($PLATFORM_URL). Verifique DNS/NAT/Firewall.${{NC}}"
+        exit 1
+    fi
+    echo -e "${{GREEN}}Pre-checks OK.${{NC}}"
+}}
+
 install_dependencies() {{
     echo -e "${{YELLOW}}Instalando dependencias...${{NC}}"
     case $OS in
@@ -802,7 +1057,7 @@ gateway_strategy = priority-weighted-failover
 [mtls]
 enabled = true
 required = true
-platform_url = {settings.MTLS_PLATFORM_URL}
+platform_url = __MTLS_PLATFORM_URL__
 ca_file = /etc/las/mtls-ca.pem
 client_cert_file = /etc/las/mtls-client.pem
 client_key_file = /etc/las/mtls-client-key.pem
@@ -843,14 +1098,56 @@ base = Path("/etc/las")
 (base / "mtls-ca.pem").write_text(payload["ca_pem"], encoding="ascii")
 (base / "mtls-client.pem").write_text(payload["client_cert_pem"], encoding="ascii")
 (base / "mtls-client-key.pem").write_text(payload["client_key_pem"], encoding="ascii")
+mtls_url = payload.get("mtls_platform_url", "")
+if mtls_url:
+    conf = base / "agent.conf"
+    try:
+        conf.write_text(conf.read_text(encoding="utf-8").replace("__MTLS_PLATFORM_URL__", mtls_url), encoding="utf-8")
+    except FileNotFoundError:
+        pass
 PY
+    MTLS_PLATFORM_URL=$(python3 - <<'PY'
+import json, os
+payload = json.loads(os.environ.get("LAS_MTLS_RESPONSE", "{{}}"))
+print(payload.get("mtls_platform_url", ""))
+PY
+    )
+    if [ -z "$MTLS_PLATFORM_URL" ]; then MTLS_PLATFORM_URL="{settings.MTLS_PLATFORM_URL}"; fi
 }}
 
 download_agent() {{
     echo -e "${{YELLOW}}Baixando agente...${{NC}}"
-    curl -fsSL "$PLATFORM_URL/api/v1/agents/artifacts/linux-agent.py" \
-      -H "Authorization: Bearer $AGENT_TOKEN" \
-      -o "$INSTALL_DIR/las-agent.py"
+    DOWNLOADED="0"
+    if [ -n "$GATEWAY_URLS" ]; then
+      OLDIFS="$IFS"; IFS=','
+      for gw in $GATEWAY_URLS; do
+        IFS="$OLDIFS"
+        gw=$(printf "%s" "$gw" | sed "s/[[:space:]]//g" | sed "s#/*$##")
+        if [ -z "$gw" ]; then IFS=','; continue; fi
+        echo -e "${{YELLOW}}Tentando baixar via gateway: $gw${{NC}}"
+        if curl -fL --retry 2 --retry-connrefused --connect-timeout 8 --max-time 60 --progress-bar \
+          --cacert "/etc/las/mtls-ca.pem" \
+          --cert "/etc/las/mtls-client.pem" \
+          --key "/etc/las/mtls-client-key.pem" \
+          "$gw/api/v1/agents/artifacts/linux-agent.py" \
+          -o "$INSTALL_DIR/las-agent.py" ; then
+          DOWNLOADED="1"
+          break
+        fi
+        IFS=','
+      done
+      IFS="$OLDIFS"
+    fi
+    if [ "$DOWNLOADED" != "1" ]; then
+      echo -e "${{YELLOW}}Baixando via SaaS (mTLS edge): $MTLS_PLATFORM_URL${{NC}}"
+      curl -fL --retry 3 --retry-connrefused --progress-bar \
+        --cacert "/etc/las/mtls-ca.pem" \
+        --cert "/etc/las/mtls-client.pem" \
+        --key "/etc/las/mtls-client-key.pem" \
+        "$MTLS_PLATFORM_URL/api/v1/agents/artifacts/linux-agent.py" \
+        -H "Authorization: Bearer $AGENT_TOKEN" \
+        -o "$INSTALL_DIR/las-agent.py"
+    fi
     chmod +x "$INSTALL_DIR/las-agent.py"
 }}
 
@@ -899,6 +1196,7 @@ verify_connection() {{
 }}
 
 detect_os
+preflight_checks
 install_dependencies
 create_directories
 write_config
@@ -920,10 +1218,13 @@ def build_windows_install_script(
     platform_url: str,
     token: str,
     role: str = "agent",
+    modules: list = None,
     gateway_urls: Optional[list[str]] = None,
     expected_sha256: Optional[str] = None,
 ) -> str:
     """Generate the Windows PowerShell installer with embedded token."""
+    modules, features = _agent_features(modules)
+    modules_str = ",".join(modules)
     gateway_urls_str = ",".join(gateway_urls or [])
     return f"""# LAS Plataforma de Monitoramento e Observabilidade
 $ErrorActionPreference = "Stop"
@@ -957,7 +1258,7 @@ Write-Progress -Activity "LAS Agent" -Status "Gravando configuracao" -PercentCom
 nexus_url = {platform_url}
 agent_token = {token}
 role = {role}
-modules = infra,logs,otel
+modules = {modules_str}
 log_dir = C:\\LASAgent\\logs
 install_dir = C:\\LASAgent
 
@@ -975,15 +1276,18 @@ routing_refresh_interval = 300
 gateway_strategy = priority-weighted-failover
 
 [features]
-process_monitor = true
-port_scan = true
-disk_monitor = true
-network_monitor = true
-log_collection = true
-otel_enabled = true
-ids_enabled = false
-vuln_scan_enabled = false
-apm_enabled = false
+process_monitor = {_as_ini_bool(features["process_monitor"])}
+service_monitor = {_as_ini_bool(features["service_monitor"])}
+port_scan = {_as_ini_bool(features["port_scan"])}
+disk_monitor = {_as_ini_bool(features["disk_monitor"])}
+network_monitor = {_as_ini_bool(features["network_monitor"])}
+log_collection = {_as_ini_bool(features["log_collection"])}
+otel_enabled = {_as_ini_bool(features["otel_enabled"])}
+traces_enabled = {_as_ini_bool(features["traces_enabled"])}
+rum_enabled = {_as_ini_bool(features["rum_enabled"])}
+ids_enabled = {_as_ini_bool(features["ids_enabled"])}
+vuln_scan_enabled = {_as_ini_bool(features["vuln_scan_enabled"])}
+apm_enabled = {_as_ini_bool(features["apm_enabled"])}
 
 [log_paths]
 paths = C:\\LASAgent\\logs\\*.log,C:\\inetpub\\logs\\LogFiles\\*\\*.log
@@ -1077,8 +1381,20 @@ if ($status -eq "Running") {{
 """
 
 
-def build_gateway_install_script(platform_url: str, token: str, gateway_type: str = "infra") -> str:
+def build_gateway_install_script(
+    platform_url: str,
+    token: str,
+    gateway_type: str = "agents",
+    gateway_config: Optional[dict] = None,
+) -> str:
     """Generate a Linux gateway installer with embedded token."""
+    features = _gateway_features(gateway_config)
+    syslog_config = (gateway_config or {}).get("syslog") or {}
+    syslog_enabled = bool(syslog_config.get("enabled", features.get("syslog", False)))
+    syslog_host = syslog_config.get("listen_host", "0.0.0.0")
+    syslog_udp_port = int(syslog_config.get("udp_port", 514))
+    syslog_tcp_port = int(syslog_config.get("tcp_port", 514))
+    syslog_tls_port = int(syslog_config.get("tls_port", 6514))
     return f"""#!/bin/bash
 set -e
 
@@ -1188,20 +1504,29 @@ protect_data = true
 protection = mtls
 
 [features]
-logs = true
-otel = true
-security = true
-ids = true
-network_discovery = true
-snmp = true
-syslog = true
+agent_proxy = {_as_ini_bool(features.get("agent_proxy", False))}
+logs = {_as_ini_bool(features.get("logs", False))}
+otel = {_as_ini_bool(features.get("otel", False))}
+traces = {_as_ini_bool(features.get("traces", False))}
+rum = {_as_ini_bool(features.get("rum", False))}
+integrations = {_as_ini_bool(features.get("integrations", False))}
+database = {_as_ini_bool(features.get("database", False))}
+messaging = {_as_ini_bool(features.get("messaging", False))}
+itsm = {_as_ini_bool(features.get("itsm", False))}
+webhooks = {_as_ini_bool(features.get("webhooks", False))}
+security = {_as_ini_bool(features.get("security", False))}
+ids = {_as_ini_bool(features.get("ids", False))}
+pentest = {_as_ini_bool(features.get("pentest", False))}
+network_discovery = {_as_ini_bool(features.get("network_discovery", False))}
+snmp = {_as_ini_bool(features.get("snmp", False))}
+syslog = {_as_ini_bool(syslog_enabled)}
 
 [syslog]
-enabled = true
-listen_host = 0.0.0.0
-udp_port = 514
-tcp_port = 514
-tls_port = 6514
+enabled = {_as_ini_bool(syslog_enabled)}
+listen_host = {syslog_host}
+udp_port = {syslog_udp_port}
+tcp_port = {syslog_tcp_port}
+tls_port = {syslog_tls_port}
 CONF
 
 RESPONSE=$(curl -fsSL --get "$PLATFORM_URL/api/v1/agents/bootstrap/mtls" \
@@ -1246,8 +1571,20 @@ echo "Desinstalar: sudo bash install-las-gateway-linux.sh --uninstall"
 """
 
 
-def build_windows_gateway_install_script(platform_url: str, token: str, gateway_type: str = "infra") -> str:
+def build_windows_gateway_install_script(
+    platform_url: str,
+    token: str,
+    gateway_type: str = "agents",
+    gateway_config: Optional[dict] = None,
+) -> str:
     """Generate a Windows PowerShell gateway installer with embedded token."""
+    features = _gateway_features(gateway_config)
+    syslog_config = (gateway_config or {}).get("syslog") or {}
+    syslog_enabled = bool(syslog_config.get("enabled", features.get("syslog", False)))
+    syslog_host = syslog_config.get("listen_host", "0.0.0.0")
+    syslog_udp_port = int(syslog_config.get("udp_port", 514))
+    syslog_tcp_port = int(syslog_config.get("tcp_port", 514))
+    syslog_tls_port = int(syslog_config.get("tls_port", 6514))
     return f"""# LAS Plataforma de Monitoramento e Observabilidade
 $ErrorActionPreference = "Stop"
 
@@ -1305,20 +1642,29 @@ protect_data = true
 protection = mtls
 
 [features]
-logs = true
-otel = true
-security = true
-ids = true
-network_discovery = true
-snmp = true
-syslog = true
+agent_proxy = {_as_ini_bool(features.get("agent_proxy", False))}
+logs = {_as_ini_bool(features.get("logs", False))}
+otel = {_as_ini_bool(features.get("otel", False))}
+traces = {_as_ini_bool(features.get("traces", False))}
+rum = {_as_ini_bool(features.get("rum", False))}
+integrations = {_as_ini_bool(features.get("integrations", False))}
+database = {_as_ini_bool(features.get("database", False))}
+messaging = {_as_ini_bool(features.get("messaging", False))}
+itsm = {_as_ini_bool(features.get("itsm", False))}
+webhooks = {_as_ini_bool(features.get("webhooks", False))}
+security = {_as_ini_bool(features.get("security", False))}
+ids = {_as_ini_bool(features.get("ids", False))}
+pentest = {_as_ini_bool(features.get("pentest", False))}
+network_discovery = {_as_ini_bool(features.get("network_discovery", False))}
+snmp = {_as_ini_bool(features.get("snmp", False))}
+syslog = {_as_ini_bool(syslog_enabled)}
 
 [syslog]
-enabled = true
-listen_host = 0.0.0.0
-udp_port = 514
-tcp_port = 514
-tls_port = 6514
+enabled = {_as_ini_bool(syslog_enabled)}
+listen_host = {syslog_host}
+udp_port = {syslog_udp_port}
+tcp_port = {syslog_tcp_port}
+tls_port = {syslog_tls_port}
 "@ | Set-Content -LiteralPath "$CONFIG_DIR\\gateway.conf" -Encoding Ascii
 
 $headers = @{{ "Authorization" = "Bearer $GATEWAY_TOKEN" }}

@@ -14,13 +14,22 @@ import hashlib
 import json
 import uuid
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, PlainTextResponse, Response
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, List
 from app.db.base import get_db
 from app.middleware.auth import get_current_user
 from app.services.gateway_routing import resolve_gateway_routes
+from app.services.license_service import (
+    gateway_config_for_type,
+    installer_options_payload,
+    normalize_csv,
+    resolve_agent_entitlements,
+    resolve_gateway_type,
+    tenant_license_codes,
+)
 from app.services.token_service import (
     create_agent_token, create_gateway_token, build_docker_compose,
     build_gateway_install_script, build_k8s_manifest,
@@ -29,7 +38,8 @@ from app.services.token_service import (
 from app.services.mtls_service import issue_agent_material, issue_gateway_material
 from app.services.mtls_guard import require_mtls_request
 from app.core.config import settings
-from app.models import AgentToken, Gateway, Host, NetworkAsset, NetworkPort, Task
+from app.models import AgentToken, Gateway, Host, NetworkAsset, NetworkPort, Task, Tenant
+from app.schemas.agent import AgentStatusUpdate, CreateAgentSchema
 from sqlalchemy import desc, or_, select
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -93,6 +103,110 @@ COMPONENT_ARTIFACTS = {
     ("gateway", "linux"): "gateway.py",
     ("gateway", "windows"): "windows-gateway.exe",
 }
+
+
+class AgentUpdatePayload(BaseModel):
+    """Payload for updating agent token metadata."""
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+    agent_type: Optional[str] = None
+    status: Optional[str] = None
+    hostname: Optional[str] = None
+    version: Optional[str] = None
+
+
+def serialize_agent_token(token: AgentToken) -> dict:
+    config = token.install_config or {}
+    return {
+        "id": token.id,
+        "name": token.name,
+        "description": token.description,
+        "agent_type": token.agent_type,
+        "role": token.role,
+        "status": token.status,
+        "hostname": config.get("hostname"),
+        "version": token.version,
+        "tenant_id": token.tenant_id,
+        "active": token.active,
+        "last_heartbeat": token.last_heartbeat or token.last_used,
+        "created_at": token.created_at,
+        "updated_at": token.updated_at,
+    }
+
+
+async def current_tenant_or_404(db: AsyncSession, tenant_id: str) -> Tenant:
+    tenant = await db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return tenant
+
+
+async def resolve_agent_install_request(
+    db: AsyncSession,
+    tenant_id: str,
+    profile: str,
+    modules: Optional[str],
+) -> dict:
+    tenant = await current_tenant_or_404(db, tenant_id)
+    entitlements = resolve_agent_entitlements(
+        tenant,
+        profile=profile,
+        requested_modules=normalize_csv(modules),
+    )
+    if entitlements.denied:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "message": "Modulo de monitoramento nao licenciado para este tenant",
+                "denied_modules": entitlements.denied,
+                "licenses": sorted(entitlements.licenses),
+            },
+        )
+    module_set = set(entitlements.modules)
+    return {
+        "profile": entitlements.profile,
+        "modules": entitlements.modules,
+        "features": {
+            "process_monitor": "processes" in module_set or "infra" in module_set,
+            "service_monitor": "services" in module_set,
+            "port_scan": "infra" in module_set,
+            "disk_monitor": "infra" in module_set,
+            "network_monitor": "infra" in module_set,
+            "log_collection": True,
+            "otel_enabled": "otel" in module_set or "traces" in module_set,
+            "traces_enabled": "traces" in module_set,
+            "rum_enabled": "rum" in module_set,
+            "ids_enabled": "ids" in module_set,
+            "vuln_scan_enabled": "vuln_scan" in module_set,
+            "apm_enabled": "otel" in module_set or "traces" in module_set,
+        },
+        "licenses": sorted(entitlements.licenses),
+    }
+
+
+async def resolve_gateway_install_request(
+    db: AsyncSession,
+    tenant_id: str,
+    gateway_type: str,
+) -> dict:
+    tenant = await current_tenant_or_404(db, tenant_id)
+    licenses = tenant_license_codes(tenant)
+    gateway_info = resolve_gateway_type(gateway_type)
+    required_license = gateway_info.get("license", "infra")
+    if required_license not in licenses:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "message": "Tipo de gateway nao licenciado para este tenant",
+                "gateway_type": gateway_info["key"],
+                "required_license": required_license,
+                "licenses": sorted(licenses),
+            },
+        )
+    config = gateway_config_for_type(gateway_info["key"])
+    config["licenses"] = sorted(licenses)
+    return {"info": gateway_info, "config": config}
 
 
 def normalize_discovered_asset_type(item: dict) -> str:
@@ -227,10 +341,27 @@ async def upsert_gateway_discovered_assets(db: AsyncSession, tenant_id: str, ass
 
 
 def artifact_sha256(name: str) -> str | None:
-    path = AGENT_ARTIFACTS.get(name)
+    path = resolve_artifact_path(name)
     if not path or not path.exists() or path.is_dir():
         return None
     return hashlib.sha256(path.read_bytes()).hexdigest().upper()
+
+
+def resolve_artifact_path(name: str) -> Path | None:
+    """
+    Prefer artifacts from ROOT_DIR/releases (prod), but fall back to ROOT_DIR/dist
+    for dev/homolog environments where only dist outputs exist.
+    """
+    path = AGENT_ARTIFACTS.get(name)
+    if not path:
+        return None
+    if path.exists():
+        return path
+    if path.parent.name == "releases":
+        fallback = ROOT_DIR / "dist" / path.name
+        if fallback.exists():
+            return fallback
+    return path
 
 
 def normalize_os_name(os_name: str | None) -> str:
@@ -246,7 +377,7 @@ async def resolve_gateway_urls(db: AsyncSession, tenant_id: str) -> list[str]:
 
 
 def embed_setup_overlay(setup_name: str, overlay: dict) -> bytes:
-    setup_path = AGENT_ARTIFACTS.get(setup_name)
+    setup_path = resolve_artifact_path(setup_name)
     if not setup_path or not setup_path.exists():
         raise HTTPException(status_code=404, detail=f"{setup_name} not found")
     payload = json.dumps(overlay, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
@@ -296,10 +427,20 @@ async def verify_machine_token_value(
     raise HTTPException(status_code=401, detail="Invalid token")
 
 
+@router.get("/install-options")
+async def get_install_options(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    tenant = await current_tenant_or_404(db, user.tenant_id)
+    return installer_options_payload(tenant)
+
+
 @router.get("/download/linux", response_class=PlainTextResponse)
 async def download_linux_installer(
     role: str = Query("agent"),
-    modules: Optional[str] = Query("infra,logs,otel"),
+    profile: str = Query("infra", pattern="^(infra|complete)$"),
+    modules: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -307,6 +448,7 @@ async def download_linux_installer(
     Auto-generates a token and returns the Linux bash installer.
     No manual token creation needed!
     """
+    install_request = await resolve_agent_install_request(db, user.tenant_id, profile, modules)
     token = await create_agent_token(
         db=db,
         tenant_id=user.tenant_id,
@@ -315,7 +457,10 @@ async def download_linux_installer(
         description=f"Auto-generated on download by {user.username}",
         install_config={
             "os": "linux",
-            "modules": modules.split(",") if modules else [],
+            "profile": install_request["profile"],
+            "modules": install_request["modules"],
+            "features": install_request["features"],
+            "licenses": install_request["licenses"],
             "transport": {
                 "mtls_required": True,
                 "compress_enabled": True,
@@ -328,7 +473,7 @@ async def download_linux_installer(
         platform_url=settings.PLATFORM_URL,
         token=token.token,
         role=role,
-        modules=modules.split(",") if modules else None,
+        modules=install_request["modules"],
         gateway_urls=await resolve_gateway_urls(db, user.tenant_id),
     )
 
@@ -345,9 +490,12 @@ async def download_linux_installer(
 async def download_windows_installer(
     role: str = Query("agent"),
     format: str = Query("exe", pattern="^(exe|ps1)$"),
+    profile: str = Query("infra", pattern="^(infra|complete)$"),
+    modules: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
+    install_request = await resolve_agent_install_request(db, user.tenant_id, profile, modules)
     token = await create_agent_token(
         db=db,
         tenant_id=user.tenant_id,
@@ -356,6 +504,10 @@ async def download_windows_installer(
         description=f"Auto-generated on download by {user.username}",
         install_config={
             "os": "windows",
+            "profile": install_request["profile"],
+            "modules": install_request["modules"],
+            "features": install_request["features"],
+            "licenses": install_request["licenses"],
             "transport": {
                 "mtls_required": True,
                 "compress_enabled": True,
@@ -370,6 +522,7 @@ async def download_windows_installer(
             platform_url=settings.PLATFORM_URL,
             token=token.token,
             role=role,
+            modules=install_request["modules"],
             gateway_urls=gateway_urls,
             expected_sha256=artifact_sha256("windows-agent.exe"),
         )
@@ -387,6 +540,9 @@ async def download_windows_installer(
         "mtls_platform_url": settings.MTLS_PLATFORM_URL,
         "token": token.token,
         "role": role,
+        "profile": install_request["profile"],
+        "modules": install_request["modules"],
+        "features": install_request["features"],
         "gateway_urls": gateway_urls,
         "expected_sha256": artifact_sha256("windows-agent.exe") or "",
         "artifact_path": "/api/v1/agents/artifacts/windows-agent.exe",
@@ -611,18 +767,22 @@ async def gateway_task_result(
 
 @router.get("/download/gateway/linux", response_class=PlainTextResponse)
 async def download_linux_gateway_installer(
-    gateway_type: str = Query("infra"),
+    gateway_type: str = Query("agents"),
     name: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
+    install_request = await resolve_gateway_install_request(db, user.tenant_id, gateway_type)
+    gateway_info = install_request["info"]
+    gateway_config = install_request["config"]
     gateway = await create_gateway_token(
         db=db,
         tenant_id=user.tenant_id,
-        name=name or f"Gateway {gateway_type}",
-        gateway_type=gateway_type,
+        name=name or gateway_info["label"],
+        gateway_type=gateway_info["key"],
         port=9443,
         config={
+            **gateway_config,
             "provisioning_source": "installer_download",
             "installer_os": "linux",
             "priority": 100,
@@ -643,6 +803,7 @@ async def download_linux_gateway_installer(
         platform_url=settings.PLATFORM_URL,
         token=gateway.token,
         gateway_type=gateway.type,
+        gateway_config=gateway.config,
     )
 
     return PlainTextResponse(
@@ -656,19 +817,23 @@ async def download_linux_gateway_installer(
 
 @router.get("/download/gateway/windows")
 async def download_windows_gateway_installer(
-    gateway_type: str = Query("infra"),
+    gateway_type: str = Query("agents"),
     name: Optional[str] = Query(None),
     format: str = Query("exe", pattern="^(exe|ps1)$"),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
+    install_request = await resolve_gateway_install_request(db, user.tenant_id, gateway_type)
+    gateway_info = install_request["info"]
+    gateway_config = install_request["config"]
     gateway = await create_gateway_token(
         db=db,
         tenant_id=user.tenant_id,
-        name=name or f"Gateway {gateway_type} Windows",
-        gateway_type=gateway_type,
+        name=name or f"{gateway_info['label']} Windows",
+        gateway_type=gateway_info["key"],
         port=9443,
         config={
+            **gateway_config,
             "provisioning_source": "installer_download",
             "installer_os": "windows",
             "priority": 100,
@@ -690,6 +855,7 @@ async def download_windows_gateway_installer(
             platform_url=settings.PLATFORM_URL,
             token=gateway.token,
             gateway_type=gateway.type,
+            gateway_config=gateway.config,
         )
         return PlainTextResponse(
             content=script,
@@ -705,6 +871,7 @@ async def download_windows_gateway_installer(
         "mtls_platform_url": settings.MTLS_PLATFORM_URL,
         "token": gateway.token,
         "gateway_type": gateway.type,
+        "gateway_config": gateway.config,
         "expected_sha256": artifact_sha256("windows-gateway.exe") or "",
         "artifact_path": "/api/v1/agents/artifacts/windows-gateway.exe",
         "mtls_bootstrap_path": "/api/v1/agents/bootstrap/mtls",
@@ -724,21 +891,33 @@ async def download_windows_gateway_installer(
 
 @router.get("/download/docker", response_class=PlainTextResponse)
 async def download_docker_compose(
+    profile: str = Query("infra", pattern="^(infra|complete)$"),
+    modules: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
+    install_request = await resolve_agent_install_request(db, user.tenant_id, profile, modules)
     token = await create_agent_token(
         db=db,
         tenant_id=user.tenant_id,
         role="agent",
         name="Docker Agent",
         description=f"Auto-generated for Docker by {user.username}",
-        install_config={"os": "docker"},
+        install_config={
+            "os": "docker",
+            "profile": install_request["profile"],
+            "modules": install_request["modules"],
+            "features": install_request["features"],
+            "licenses": install_request["licenses"],
+        },
     )
 
     script = build_docker_compose(
         platform_url=settings.PLATFORM_URL,
         token=token.token,
+        role="agent",
+        modules=install_request["modules"],
+        gateway_urls=await resolve_gateway_urls(db, user.tenant_id),
     )
 
     return PlainTextResponse(
@@ -749,21 +928,33 @@ async def download_docker_compose(
 
 @router.get("/download/k8s", response_class=PlainTextResponse)
 async def download_k8s_manifest(
+    profile: str = Query("infra", pattern="^(infra|complete)$"),
+    modules: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
+    install_request = await resolve_agent_install_request(db, user.tenant_id, profile, modules)
     token = await create_agent_token(
         db=db,
         tenant_id=user.tenant_id,
         role="k8s",
         name="Kubernetes DaemonSet Agent",
         description=f"Auto-generated for K8s by {user.username}",
-        install_config={"os": "kubernetes"},
+        install_config={
+            "os": "kubernetes",
+            "profile": install_request["profile"],
+            "modules": install_request["modules"],
+            "features": install_request["features"],
+            "licenses": install_request["licenses"],
+        },
     )
 
     manifest = build_k8s_manifest(
         platform_url=settings.PLATFORM_URL,
         token=token.token,
+        role="k8s",
+        modules=install_request["modules"],
+        gateway_urls=await resolve_gateway_urls(db, user.tenant_id),
     )
 
     return PlainTextResponse(
@@ -1060,7 +1251,7 @@ async def download_artifact(
     if not agent_result.scalar_one_or_none() and not gateway_result.scalar_one_or_none():
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    artifact_path = AGENT_ARTIFACTS.get(artifact_name)
+    artifact_path = resolve_artifact_path(artifact_name)
     if not artifact_path or not artifact_path.exists():
         raise HTTPException(status_code=404, detail="Artifact not found")
 
@@ -1073,6 +1264,63 @@ async def download_artifact(
 
     content = artifact_path.read_text(encoding="utf-8")
     return PlainTextResponse(content=content, headers={"Content-Disposition": f"attachment; filename={artifact_name}"})
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def create_agent(
+    payload: CreateAgentSchema,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    token = AgentToken(
+        tenant_id=user.tenant_id,
+        name=payload.name,
+        description=payload.description,
+        agent_type=payload.agent_type,
+        install_config={
+            "hostname": payload.hostname,
+            "os_type": payload.os_type,
+            "status": "offline",
+        },
+    )
+    db.add(token)
+    await db.commit()
+    await db.refresh(token)
+    return serialize_agent_token(token)
+
+
+@router.get("")
+async def list_agents(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=1000),
+    agent_type: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    query = select(AgentToken).where(AgentToken.tenant_id == user.tenant_id, AgentToken.active == True)
+    if agent_type:
+        query = query.where(AgentToken.role == agent_type)
+    total_rows = (await db.execute(query)).scalars().all()
+    result = await db.execute(query.order_by(desc(AgentToken.created_at)).offset(skip).limit(limit))
+    items = [serialize_agent_token(token) for token in result.scalars().all()]
+    return {"items": items, "total": len(total_rows), "skip": skip, "limit": limit}
+
+
+@router.post("/heartbeat", status_code=status.HTTP_202_ACCEPTED)
+async def agent_heartbeat(
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    agent_id = payload.get("agent_id") or payload.get("id")
+    if ("agent_id" in payload or "id" in payload) and not str(agent_id or "").strip():
+        raise HTTPException(status_code=400, detail="agent_id is required")
+    if agent_id:
+        token = await db.get(AgentToken, agent_id)
+        if token:
+            token.last_used = datetime.now(timezone.utc)
+            token.status = "online"
+            await db.commit()
+    return {"status": "accepted"}
 
 
 @router.get("/tokens")
@@ -1113,3 +1361,74 @@ async def revoke_token(
     token.active = False
     await db.commit()
     return {"status": "revoked"}
+
+
+@router.get("/{agent_id}")
+async def get_agent(
+    agent_id: str,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    token = await db.get(AgentToken, agent_id)
+    if not token or token.tenant_id != user.tenant_id or not token.active:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return serialize_agent_token(token)
+
+
+@router.patch("/{agent_id}")
+async def update_agent(
+    agent_id: str,
+    payload: AgentUpdatePayload,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    token = await db.get(AgentToken, agent_id)
+    if not token or token.tenant_id != user.tenant_id or not token.active:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    updates = payload.model_dump(exclude_unset=True)
+    if "name" in updates:
+        token.name = updates["name"]
+    if "description" in updates:
+        token.description = updates["description"]
+    if "agent_type" in updates:
+        token.agent_type = updates["agent_type"]
+    config = dict(token.install_config or {})
+    for key in ("status", "hostname", "version"):
+        if key in updates:
+            config[key] = updates[key]
+    token.install_config = config
+    flag_modified(token, "install_config")
+    await db.commit()
+    await db.refresh(token)
+    return serialize_agent_token(token)
+
+
+@router.put("/{agent_id}/status")
+async def update_agent_status(
+    agent_id: str,
+    payload: AgentStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    token = await db.get(AgentToken, agent_id)
+    if not token or token.tenant_id != user.tenant_id or not token.active:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    token.status = payload.status
+    flag_modified(token, "install_config")
+    await db.commit()
+    await db.refresh(token)
+    return serialize_agent_token(token)
+
+
+@router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_agent(
+    agent_id: str,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    token = await db.get(AgentToken, agent_id)
+    if not token or token.tenant_id != user.tenant_id:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    token.active = False
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -172,9 +172,27 @@ def check_for_update(config: configparser.ConfigParser, token: str, ssl_context:
     if not expected_hash or not download_url:
         raise RuntimeError("update metadata missing sha256 or download_url")
 
+    artifact_name = (payload.get("artifact") or "").strip()
+    if not artifact_name:
+        artifact_name = str(download_url).rstrip("/").split("/")[-1]
+
     target_path = running_payload_path()
     temp_path = target_path.with_suffix(target_path.suffix + f".{payload.get('latest_version')}.download")
-    download_file(download_url, token, temp_path, ssl_context)
+
+    downloaded = False
+    gateway_urls = get_gateway_urls(config)
+    for gateway in gateway_urls:
+        try:
+            mirror_url = f"{gateway.rstrip('/')}/api/v1/agents/artifacts/{artifact_name}"
+            LOG.info("trying update download via gateway mirror: %s", mirror_url)
+            download_file(mirror_url, None, temp_path, ssl_context)
+            downloaded = True
+            break
+        except Exception as exc:
+            LOG.warning("gateway mirror download failed (%s): %s", gateway, exc)
+
+    if not downloaded:
+        download_file(download_url, token, temp_path, ssl_context)
     actual_hash = sha256_file(temp_path)
     if actual_hash != expected_hash:
         temp_path.unlink(missing_ok=True)

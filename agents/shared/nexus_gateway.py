@@ -23,6 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib import request
+from urllib.parse import unquote, urlparse
 
 
 CONFIG_PATH = Path(os.getenv("NEXUS_CONFIG", "/etc/nexus/gateway.conf"))
@@ -35,6 +36,7 @@ STATE: dict[str, Any] = {
     "metrics": [],
 }
 STATE_LOCK = threading.Lock()
+RUNTIME: dict[str, Any] = {}
 
 
 def load_config() -> configparser.ConfigParser:
@@ -683,6 +685,15 @@ def update_loop(config: configparser.ConfigParser) -> None:
 
 
 class GatewayHandler(BaseHTTPRequestHandler):
+    def _send_bytes(self, status: int, content: bytes, *, content_type: str, filename: str | None = None) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(content)))
+        if filename:
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.end_headers()
+        self.wfile.write(content)
+
     def _json(self, status: int, payload: dict) -> None:
         encoded = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -691,9 +702,71 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
+    def _safe_artifact_name(self, raw: str) -> str | None:
+        name = (raw or "").strip()
+        if not name:
+            return None
+        if "/" in name or "\\" in name or ".." in name:
+            return None
+        return name
+
+    def _artifact_cache_dir(self) -> Path:
+        config = RUNTIME.get("config")
+        if config is None:
+            return Path("/opt/las-gateway/cache")
+        raw = config.get("artifacts", "cache_dir", fallback="").strip()
+        if raw:
+            return Path(raw)
+        install_dir = config.get("nexus", "install_dir", fallback="/opt/las-gateway").strip() or "/opt/las-gateway"
+        return Path(install_dir) / "cache"
+
+    def _fetch_artifact(self, artifact_name: str) -> tuple[bytes, str]:
+        cache_dir = self._artifact_cache_dir()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cached_path = cache_dir / artifact_name
+        if cached_path.exists() and cached_path.stat().st_size > 0:
+            content = cached_path.read_bytes()
+            return content, self._guess_content_type(cached_path)
+
+        # Cache miss: download from the platform using the gateway token (platform validates authorization).
+        config = RUNTIME["config"]
+        token = RUNTIME["token"]
+        ssl_context = RUNTIME.get("client_ssl_context")
+        base_url = config.get("mtls", "platform_url", fallback=config["nexus"]["nexus_url"]).rstrip("/")
+        url = f"{base_url}/api/v1/agents/artifacts/{artifact_name}"
+        tmp_path = cache_dir / f".{artifact_name}.{uuid.uuid4().hex}.tmp"
+        download_file(url, token, tmp_path, ssl_context=ssl_context)
+        tmp_path.replace(cached_path)
+        content = cached_path.read_bytes()
+        return content, self._guess_content_type(cached_path)
+
+    def _guess_content_type(self, path: Path) -> str:
+        if path.suffix.lower() in {".exe", ".bin"}:
+            return "application/octet-stream"
+        if path.suffix.lower() in {".json"}:
+            return "application/json"
+        if path.suffix.lower() in {".yml", ".yaml"}:
+            return "application/x-yaml"
+        return "text/plain; charset=utf-8"
+
     def do_GET(self) -> None:  # noqa: N802
-        if self.path == "/health":
+        parsed = urlparse(self.path)
+        if parsed.path == "/health":
             self._json(200, {"status": "ok"})
+            return
+
+        if parsed.path.startswith("/api/v1/agents/artifacts/"):
+            artifact_name = self._safe_artifact_name(unquote(parsed.path.split("/")[-1]))
+            if not artifact_name:
+                self._json(400, {"detail": "invalid artifact name"})
+                return
+            try:
+                content, content_type = self._fetch_artifact(artifact_name)
+            except Exception as exc:
+                LOG.warning("artifact fetch failed for %s: %s", artifact_name, exc)
+                self._json(503, {"detail": "artifact mirror unavailable"})
+                return
+            self._send_bytes(200, content, content_type=content_type, filename=artifact_name)
             return
         self._json(404, {"detail": "not found"})
 
@@ -827,6 +900,14 @@ def main() -> int:
     listen_port = config.getint("nexus", "listen_port", fallback=8080)
     token = config["nexus"]["gateway_token"]
     client_ssl_context = build_client_ssl_context(config)
+    RUNTIME.clear()
+    RUNTIME.update(
+        {
+            "config": config,
+            "token": token,
+            "client_ssl_context": client_ssl_context,
+        }
+    )
     try:
         check_for_update(config, token, client_ssl_context)
     except SystemExit:
