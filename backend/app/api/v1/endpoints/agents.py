@@ -94,8 +94,8 @@ AGENT_ARTIFACTS = {
 }
 SETUP_OVERLAY_MAGIC = b"LASSETUPCFG1"
 COMPONENT_LATEST_VERSION = {
-    "agent": "4.1.0",
-    "gateway": "4.1.2",
+    "agent": "4.1.1",
+    "gateway": "4.1.3",
 }
 COMPONENT_ARTIFACTS = {
     ("agent", "linux"): "linux-agent.py",
@@ -598,7 +598,7 @@ async def check_component_update(
     if not artifact_name:
         raise HTTPException(status_code=404, detail="No update artifact for platform")
 
-    artifact_path = AGENT_ARTIFACTS.get(artifact_name)
+    artifact_path = resolve_artifact_path(artifact_name)
     if not artifact_path or not artifact_path.exists():
         raise HTTPException(status_code=404, detail="Update artifact not found")
 

@@ -27,7 +27,7 @@ from urllib.parse import unquote, urlparse
 
 
 CONFIG_PATH = Path(os.getenv("NEXUS_CONFIG", "/etc/nexus/gateway.conf"))
-GATEWAY_VERSION = "4.1.2"
+GATEWAY_VERSION = "4.1.3"
 LOG = logging.getLogger("las-gateway")
 STATE: dict[str, Any] = {
     "logs": [],

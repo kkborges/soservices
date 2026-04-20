@@ -27,7 +27,7 @@ except ImportError as exc:  # pragma: no cover - installation issue
 
 
 CONFIG_PATH = Path(os.getenv("NEXUS_CONFIG", "/etc/las/agent.conf"))
-AGENT_VERSION = "4.1.0"
+AGENT_VERSION = "4.1.1"
 LOG = logging.getLogger("las-agent")
 LOG_OFFSETS: dict[str, int] = {}
 DEFAULT_LOG_PATTERNS = [
