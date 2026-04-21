@@ -190,7 +190,9 @@ frontend redis_front
 backend redis_master
     option tcp-check
     tcp-check connect
-    tcp-check send AUTH\ $$PW\r\n
+    # NOTE: $PW is expanded by the shell while generating this file inside the container.
+    # Do not use $$PW here (that becomes the shell PID).
+    tcp-check send AUTH\ $PW\r\n
     tcp-check expect string +OK
     tcp-check send INFO\ replication\r\n
     tcp-check expect string role:master
