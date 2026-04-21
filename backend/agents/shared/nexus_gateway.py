@@ -26,7 +26,7 @@ from urllib import request
 from urllib.parse import unquote, urlparse
 
 
-CONFIG_PATH = Path(os.getenv("NEXUS_CONFIG", "/etc/nexus/gateway.conf"))
+CONFIG_PATH = Path(os.getenv("LAS_CONFIG") or os.getenv("NEXUS_CONFIG") or "/etc/las/gateway.conf")
 GATEWAY_VERSION = "4.1.3"
 LOG = logging.getLogger("las-gateway")
 STATE: dict[str, Any] = {
@@ -37,6 +37,27 @@ STATE: dict[str, Any] = {
 }
 STATE_LOCK = threading.Lock()
 RUNTIME: dict[str, Any] = {}
+
+
+def primary_config_section(config: configparser.ConfigParser) -> str:
+    # Backward compatible with legacy [nexus] configs.
+    return "las" if config.has_section("las") else "nexus"
+
+
+def get_platform_url(config: configparser.ConfigParser) -> str:
+    section = primary_config_section(config)
+    return (
+        config.get(section, "platform_url", fallback="").strip()
+        or config.get(section, "nexus_url", fallback="").strip()
+    )
+
+
+def get_gateway_token(config: configparser.ConfigParser) -> str:
+    section = primary_config_section(config)
+    return (
+        config.get(section, "gateway_token", fallback="").strip()
+        or config.get(section, "token", fallback="").strip()
+    )
 
 
 def load_config() -> configparser.ConfigParser:
@@ -162,7 +183,7 @@ def apply_linux_update(temp_path: Path, target_path: Path) -> None:
 def check_for_update(config: configparser.ConfigParser, token: str, ssl_context: ssl.SSLContext | None) -> None:
     if not config.getboolean("updates", "enabled", fallback=True):
         return
-    base_url = config.get("mtls", "platform_url", fallback=config["nexus"]["nexus_url"]).rstrip("/")
+    base_url = config.get("mtls", "platform_url", fallback=get_platform_url(config)).rstrip("/")
     os_name = platform.system().lower() or "linux"
     payload = get_json(
         f"{base_url}/api/v1/agents/updates/check?kind=gateway&version={GATEWAY_VERSION}&os_name={os_name}",
@@ -590,8 +611,8 @@ def run_gateway_task(task: dict) -> dict:
 def gateway_task_loop(config: configparser.ConfigParser) -> None:
     if not config.getboolean("features", "network_discovery", fallback=True):
         return
-    base_url = config.get("mtls", "platform_url", fallback=config["nexus"]["nexus_url"]).rstrip("/")
-    token = config["nexus"]["gateway_token"]
+    base_url = config.get("mtls", "platform_url", fallback=get_platform_url(config)).rstrip("/")
+    token = get_gateway_token(config)
     ssl_context = build_client_ssl_context(config)
     poll_interval = max(config.getint("intervals", "task_poll_interval", fallback=20), 10)
     while True:
@@ -623,7 +644,7 @@ def gateway_task_loop(config: configparser.ConfigParser) -> None:
 
 
 def update_loop(config: configparser.ConfigParser) -> None:
-    token = config["nexus"]["gateway_token"]
+    token = get_gateway_token(config)
     ssl_context = build_client_ssl_context(config)
     interval = max(config.getint("updates", "check_interval", fallback=3600), 300)
     while True:
@@ -669,7 +690,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
         raw = config.get("artifacts", "cache_dir", fallback="").strip()
         if raw:
             return Path(raw)
-        install_dir = config.get("nexus", "install_dir", fallback="/opt/las-gateway").strip() or "/opt/las-gateway"
+        section = primary_config_section(config)
+        install_dir = config.get(section, "install_dir", fallback="/opt/las-gateway").strip() or "/opt/las-gateway"
         return Path(install_dir) / "cache"
 
     def _guess_content_type(self, path: Path) -> str:
@@ -692,7 +714,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         config = RUNTIME["config"]
         token = RUNTIME["token"]
         ssl_context = RUNTIME.get("client_ssl_context")
-        base_url = config.get("mtls", "platform_url", fallback=config["nexus"]["nexus_url"]).rstrip("/")
+        base_url = config.get("mtls", "platform_url", fallback=get_platform_url(config)).rstrip("/")
         url = f"{base_url}/api/v1/agents/artifacts/{artifact_name}"
         tmp_path = cache_dir / f".{artifact_name}.{uuid.uuid4().hex}.tmp"
         download_file(url, token, tmp_path, ssl_context=ssl_context)
@@ -775,11 +797,12 @@ def merge_otel_payloads(payloads: list[dict], key: str) -> dict:
 
 
 def flush_batches(config: configparser.ConfigParser) -> None:
-    base_url = config.get("mtls", "platform_url", fallback=config["nexus"]["nexus_url"]).rstrip("/")
-    token = config["nexus"]["gateway_token"]
+    base_url = config.get("mtls", "platform_url", fallback=get_platform_url(config)).rstrip("/")
+    token = get_gateway_token(config)
     batch_url = f"{base_url}/api/v1/ingest/gateway/batch"
     heartbeat_url = f"{base_url}/api/v1/ingest/gateway/heartbeat"
-    listen_port = config.getint("nexus", "listen_port", fallback=8080)
+    section = primary_config_section(config)
+    listen_port = config.getint(section, "listen_port", fallback=8080)
 
     ssl_context = build_client_ssl_context(config)
 
@@ -791,7 +814,7 @@ def flush_batches(config: configparser.ConfigParser) -> None:
                 "version": GATEWAY_VERSION,
                 "host": socket.gethostname(),
                 "port": listen_port,
-                "public_endpoint": config["nexus"].get("public_endpoint", ""),
+                "public_endpoint": config.get(section, "public_endpoint", fallback=""),
                 "metadata": {
                     "queued_logs": len(STATE["logs"]),
                     "queued_metrics": len(STATE["host_metrics"]),
@@ -847,9 +870,10 @@ def main() -> int:
     )
 
     config = load_config()
-    listen_host = config["nexus"].get("listen_host", "0.0.0.0")
-    listen_port = config.getint("nexus", "listen_port", fallback=8080)
-    token = config["nexus"]["gateway_token"]
+    section = primary_config_section(config)
+    listen_host = config.get(section, "listen_host", fallback="0.0.0.0")
+    listen_port = config.getint(section, "listen_port", fallback=8080)
+    token = get_gateway_token(config)
     client_ssl_context = build_client_ssl_context(config)
     RUNTIME.clear()
     RUNTIME.update(

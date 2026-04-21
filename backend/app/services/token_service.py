@@ -331,8 +331,8 @@ create_directories() {{
 
 write_config() {{
     cat > $CONFIG_DIR/las.conf << 'CONF'
-[nexus]
-nexus_url = {platform_url}
+[las]
+platform_url = {platform_url}
 agent_token = {token}
 role = {role}
 modules = {modules_str}
@@ -394,6 +394,7 @@ User=root
 ExecStart=/usr/bin/python3 $INSTALL_DIR/las-agent.py
 StandardOutput=append:$LOG_DIR/agent.log
 StandardError=append:$LOG_DIR/agent-error.log
+Environment=LAS_CONFIG=$CONFIG_DIR/las.conf
 Environment=NEXUS_CONFIG=$CONFIG_DIR/las.conf
 
 [Install]
@@ -460,9 +461,9 @@ def build_docker_compose(
     gateway_urls_str = ",".join(gateway_urls or [])
     return f"""version: '3.8'
 services:
-  nexus-agent:
+  las-agent:
     image: python:3.12-slim
-    container_name: nexus-agent
+    container_name: las-agent
     restart: unless-stopped
     environment:
       DEBIAN_FRONTEND: "noninteractive"
@@ -472,10 +473,11 @@ services:
       NEXUS_TOKEN: "{token}"
       NEXUS_ROLE: "{role}"
       NEXUS_MODULES: "{modules_str}"
+      LAS_CONFIG: "/etc/las/agent.conf"
       NEXUS_CONFIG: "/etc/las/agent.conf"
     volumes:
-      - nexus-agent-data:/opt/las
-      - nexus-agent-config:/etc/las
+      - las-agent-data:/opt/las
+      - las-agent-config:/etc/las
       - /var/log:/host/var/log:ro
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
@@ -493,8 +495,8 @@ services:
       echo "[LAS Agent] Gerando configuracao e certificados mTLS..."
       mkdir -p /opt/las /etc/las /var/log/las
       printf "%s\\n" \
-        "[nexus]" \
-        "nexus_url = {platform_url}" \
+        "[las]" \
+        "platform_url = {platform_url}" \
         "agent_token = {token}" \
         "role = {role}" \
         "modules = {modules_str}" \
@@ -584,8 +586,8 @@ services:
     labels:
       - "com.nexus.managed=true"
 volumes:
-  nexus-agent-data:
-  nexus-agent-config:
+  las-agent-data:
+  las-agent-config:
 """
 
 
@@ -602,23 +604,23 @@ def build_k8s_manifest(
     return f"""apiVersion: v1
 kind: Namespace
 metadata:
-  name: nexus-monitoring
+  name: las-monitoring
 ---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: nexus-agent
-  namespace: nexus-monitoring
+  name: las-agent
+  namespace: las-monitoring
   labels:
-    app: nexus-agent
+    app: las-agent
 spec:
   selector:
     matchLabels:
-      app: nexus-agent
+      app: las-agent
   template:
     metadata:
       labels:
-        app: nexus-agent
+        app: las-agent
     spec:
       hostNetwork: true
       hostPID: true
@@ -628,7 +630,7 @@ spec:
         - key: node-role.kubernetes.io/control-plane
           effect: NoSchedule
       containers:
-        - name: nexus-agent
+        - name: las-agent
           image: python:3.12-slim
           imagePullPolicy: IfNotPresent
           env:
@@ -642,6 +644,8 @@ spec:
               value: "{role}"
             - name: NEXUS_MODULES
               value: "{modules_str}"
+            - name: LAS_CONFIG
+              value: "/etc/las/agent.conf"
             - name: NEXUS_CONFIG
               value: "/etc/las/agent.conf"
             - name: NODE_NAME
@@ -679,8 +683,8 @@ spec:
               python -m pip install --disable-pip-version-check --no-cache-dir -q psutil
               mkdir -p /opt/las /etc/las /var/log/las
               printf "%s\\n" \
-                "[nexus]" \
-                "nexus_url = {platform_url}" \
+                "[las]" \
+                "platform_url = {platform_url}" \
                 "agent_token = {token}" \
                 "role = {role}" \
                 "modules = {modules_str}" \
@@ -818,8 +822,8 @@ curl -fsSL "$NEXUS_URL/api/v1/agents/artifacts/gateway.py" \\
 chmod +x "$INSTALL_DIR/las-gateway.py"
 
 cat > "$CONFIG_DIR/gateway.conf" <<CONF
-[nexus]
-nexus_url = {platform_url}
+[las]
+platform_url = {platform_url}
 gateway_token = {token}
 type = {gateway_type}
 listen_port = 8080
@@ -837,6 +841,7 @@ After=network.target
 Type=simple
 Restart=always
 ExecStart=/usr/bin/python3 $INSTALL_DIR/las-gateway.py
+Environment=LAS_CONFIG=$CONFIG_DIR/gateway.conf
 Environment=NEXUS_CONFIG=$CONFIG_DIR/gateway.conf
 
 [Install]
@@ -872,8 +877,8 @@ New-Item -ItemType Directory -Force -Path $CONFIG_DIR | Out-Null
 New-Item -ItemType Directory -Force -Path $LOG_DIR | Out-Null
 
 @"
-[nexus]
-nexus_url = {platform_url}
+[las]
+platform_url = {platform_url}
 gateway_token = {token}
 type = {gateway_type}
 listen_host = 0.0.0.0
@@ -909,7 +914,7 @@ if (-not (Test-Path $nssmPath)) {{
 & $nssmPath set $SERVICE_NAME AppStdout "$LOG_DIR\\gateway.log"
 & $nssmPath set $SERVICE_NAME AppStderr "$LOG_DIR\\gateway-error.log"
 & $nssmPath set $SERVICE_NAME Start SERVICE_AUTO_START
-& $nssmPath set $SERVICE_NAME AppEnvironmentExtra "NEXUS_CONFIG=$CONFIG_DIR\\gateway.conf"
+& $nssmPath set $SERVICE_NAME AppEnvironmentExtra \"LAS_CONFIG=$CONFIG_DIR\\gateway.conf`nNEXUS_CONFIG=$CONFIG_DIR\\gateway.conf\"
 
 Start-Service $SERVICE_NAME
 Write-Host "Gateway LAS instalado. Verifique com Get-Service $SERVICE_NAME" -ForegroundColor Green
@@ -1033,8 +1038,8 @@ create_directories() {{
 
 write_config() {{
     cat > "$CONFIG_DIR/agent.conf" <<CONF
-[nexus]
-nexus_url = {platform_url}
+[las]
+platform_url = {platform_url}
 agent_token = {token}
 role = {role}
 modules = {modules_str}
@@ -1166,6 +1171,7 @@ User=root
 ExecStart=/usr/bin/env python3 $INSTALL_DIR/las-agent.py
 StandardOutput=append:$LOG_DIR/agent.log
 StandardError=append:$LOG_DIR/agent-error.log
+Environment=LAS_CONFIG=$CONFIG_DIR/agent.conf
 Environment=NEXUS_CONFIG=$CONFIG_DIR/agent.conf
 
 [Install]
@@ -1254,8 +1260,8 @@ New-Item -ItemType Directory -Force -Path $LOG_DIR | Out-Null
 
 Write-Progress -Activity "LAS Agent" -Status "Gravando configuracao" -PercentComplete 10
 @"
-[nexus]
-nexus_url = {platform_url}
+[las]
+platform_url = {platform_url}
 agent_token = {token}
 role = {role}
 modules = {modules_str}
@@ -1361,7 +1367,7 @@ if (Get-Service -Name $SERVICE_NAME -ErrorAction SilentlyContinue) {{
 & $nssmPath set $SERVICE_NAME AppStdout "$LOG_DIR\\agent.log"
 & $nssmPath set $SERVICE_NAME AppStderr "$LOG_DIR\\agent-error.log"
 & $nssmPath set $SERVICE_NAME Start SERVICE_AUTO_START
-& $nssmPath set $SERVICE_NAME AppEnvironmentExtra "NEXUS_CONFIG=$CONFIG_DIR\\agent.conf"
+& $nssmPath set $SERVICE_NAME AppEnvironmentExtra \"LAS_CONFIG=$CONFIG_DIR\\agent.conf`nNEXUS_CONFIG=$CONFIG_DIR\\agent.conf\"
 
 Write-Progress -Activity "LAS Agent" -Status "Iniciando servico" -PercentComplete 90
 Start-Service $SERVICE_NAME
@@ -1465,8 +1471,8 @@ HOSTNAME_VALUE=$(hostname -f 2>/dev/null || hostname)
 PUBLIC_ENDPOINT="https://${{HOSTNAME_VALUE}}:9443"
 
 cat > "$CONFIG_DIR/gateway.conf" <<CONF
-[nexus]
-nexus_url = {platform_url}
+[las]
+platform_url = {platform_url}
 gateway_token = {token}
 type = {gateway_type}
 listen_host = 0.0.0.0
@@ -1557,6 +1563,7 @@ After=network.target
 Type=simple
 Restart=always
 ExecStart=/usr/bin/env python3 $INSTALL_DIR/las-gateway.py
+Environment=LAS_CONFIG=$CONFIG_DIR/gateway.conf
 Environment=NEXUS_CONFIG=$CONFIG_DIR/gateway.conf
 
 [Install]
@@ -1603,8 +1610,8 @@ New-Item -ItemType Directory -Force -Path $CONFIG_DIR | Out-Null
 New-Item -ItemType Directory -Force -Path $LOG_DIR | Out-Null
 
 @"
-[nexus]
-nexus_url = {platform_url}
+[las]
+platform_url = {platform_url}
 gateway_token = {token}
 type = {gateway_type}
 listen_host = 0.0.0.0
@@ -1700,7 +1707,7 @@ Write-Progress -Activity "LAS Gateway" -Status "Registrando servico" -PercentCom
 & $nssmPath set $SERVICE_NAME AppStdout "$LOG_DIR\\gateway.log"
 & $nssmPath set $SERVICE_NAME AppStderr "$LOG_DIR\\gateway-error.log"
 & $nssmPath set $SERVICE_NAME Start SERVICE_AUTO_START
-& $nssmPath set $SERVICE_NAME AppEnvironmentExtra "NEXUS_CONFIG=$CONFIG_DIR\\gateway.conf"
+& $nssmPath set $SERVICE_NAME AppEnvironmentExtra \"LAS_CONFIG=$CONFIG_DIR\\gateway.conf`nNEXUS_CONFIG=$CONFIG_DIR\\gateway.conf\"
 
 Write-Progress -Activity "LAS Gateway" -Status "Iniciando servico" -PercentComplete 95
 Start-Service $SERVICE_NAME

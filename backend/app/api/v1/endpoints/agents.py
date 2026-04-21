@@ -439,6 +439,7 @@ async def get_install_options(
 @router.get("/download/linux", response_class=PlainTextResponse)
 async def download_linux_installer(
     role: str = Query("agent"),
+    format: str = Query("sh", pattern="^(sh|bin)$"),
     profile: str = Query("infra", pattern="^(infra|complete)$"),
     modules: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
@@ -480,7 +481,7 @@ async def download_linux_installer(
     return PlainTextResponse(
         content=script,
         headers={
-            "Content-Disposition": "attachment; filename=install-las-agent-linux.sh",
+            "Content-Disposition": f"attachment; filename=install-las-agent-linux.{format}",
             "X-Token-ID": token.id,
         }
     )
@@ -769,6 +770,7 @@ async def gateway_task_result(
 async def download_linux_gateway_installer(
     gateway_type: str = Query("agents"),
     name: Optional[str] = Query(None),
+    format: str = Query("sh", pattern="^(sh|bin)$"),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -809,7 +811,7 @@ async def download_linux_gateway_installer(
     return PlainTextResponse(
         content=script,
         headers={
-            "Content-Disposition": "attachment; filename=install-las-gateway-linux.sh",
+            "Content-Disposition": f"attachment; filename=install-las-gateway-linux.{format}",
             "X-Gateway-ID": gateway.id,
         },
     )

@@ -26,7 +26,7 @@ except ImportError as exc:  # pragma: no cover - installation issue
     raise SystemExit("psutil is required for nexus_agent.py") from exc
 
 
-CONFIG_PATH = Path(os.getenv("NEXUS_CONFIG", "/etc/las/agent.conf"))
+CONFIG_PATH = Path(os.getenv("LAS_CONFIG") or os.getenv("NEXUS_CONFIG") or "/etc/las/agent.conf")
 AGENT_VERSION = "4.1.1"
 LOG = logging.getLogger("las-agent")
 LOG_OFFSETS: dict[str, int] = {}
@@ -45,6 +45,28 @@ DEFAULT_LOG_PATTERNS = [
     r"C:\ProgramData\nginx\logs\*.log",
     r"C:\Apache24\logs\*.log",
 ]
+
+
+def primary_config_section(config: configparser.ConfigParser) -> str:
+    # Backward compatible with legacy [nexus] configs.
+    return "las" if config.has_section("las") else "nexus"
+
+
+def get_platform_url(config: configparser.ConfigParser) -> str:
+    section = primary_config_section(config)
+    return (
+        config.get(section, "platform_url", fallback="").strip()
+        or config.get(section, "nexus_url", fallback="").strip()
+    )
+
+
+def get_agent_token(config: configparser.ConfigParser) -> str | None:
+    section = primary_config_section(config)
+    token = (
+        config.get(section, "agent_token", fallback="").strip()
+        or config.get(section, "token", fallback="").strip()
+    )
+    return token or None
 
 
 def load_config() -> configparser.ConfigParser:
@@ -158,7 +180,7 @@ def apply_linux_update(temp_path: Path, target_path: Path) -> None:
 def check_for_update(config: configparser.ConfigParser, token: str, ssl_context: ssl.SSLContext | None) -> None:
     if not config.getboolean("updates", "enabled", fallback=True):
         return
-    base_url = config.get("mtls", "platform_url", fallback=config["nexus"]["nexus_url"]).rstrip("/")
+    base_url = config.get("mtls", "platform_url", fallback=get_platform_url(config)).rstrip("/")
     os_name = platform.system().lower() or "linux"
     payload = get_json(
         f"{base_url}/api/v1/agents/updates/check?kind=agent&version={AGENT_VERSION}&os_name={os_name}",
@@ -434,8 +456,8 @@ def main() -> int:
     )
     config = load_config()
 
-    base_url = config["nexus"]["nexus_url"].rstrip("/")
-    token = config["nexus"].get("agent_token")
+    base_url = get_platform_url(config).rstrip("/")
+    token = get_agent_token(config)
     heartbeat_interval = config.getint("intervals", "heartbeat_interval", fallback=60)
     update_interval = config.getint("updates", "check_interval", fallback=3600)
     heartbeat_url = f"{base_url}/api/v1/ingest/agent/heartbeat"
