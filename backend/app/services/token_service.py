@@ -543,7 +543,15 @@ services:
         "paths = /host/var/log/syslog,/host/var/log/auth.log,/host/var/log/nginx/*.log,/host/var/log/apache2/*.log" \
         > /etc/las/agent.conf
       # Bootstrap mTLS bundle via the public Platform URL (regular TLS). The CA obtained here is then used for the mTLS edge.
-      MTLS_JSON=$$(curl -fsSL "{platform_url}/api/v1/agents/bootstrap/mtls?hostname=$$(hostname)" -H "Authorization: Bearer {token}")
+      BOOTSTRAP_URL="{platform_url}/api/v1/agents/bootstrap/mtls?hostname=$$(hostname)"
+      set +e
+      MTLS_JSON=$$(curl -fsSL "$$BOOTSTRAP_URL" -H "Authorization: Bearer {token}")
+      CURL_CODE="$$?"
+      set -e
+      if [ "$$CURL_CODE" != "0" ] || [ -z "$$MTLS_JSON" ]; then
+        echo "[LAS Agent] Falha ao baixar bundle mTLS via TLS padrao. Tentando bootstrap inseguro (somente nesta etapa)."
+        MTLS_JSON=$$(curl -kfsSL "$$BOOTSTRAP_URL" -H "Authorization: Bearer {token}")
+      fi
       export MTLS_JSON
       python -c "import json, os; from pathlib import Path; p=json.loads(os.environ['MTLS_JSON']); b=Path('/etc/las'); (b/'mtls-ca.pem').write_text(p['ca_pem'], encoding='ascii'); (b/'mtls-client.pem').write_text(p['client_cert_pem'], encoding='ascii'); (b/'mtls-client-key.pem').write_text(p['client_key_pem'], encoding='ascii'); mtls=p.get('mtls_platform_url') or '{settings.MTLS_PLATFORM_URL}'; conf=(b/'agent.conf'); conf.write_text(conf.read_text(encoding='utf-8').replace('__MTLS_PLATFORM_URL__', mtls), encoding='utf-8')"
       MTLS_PLATFORM_URL=$$(python -c "import json, os; print(json.loads(os.environ['MTLS_JSON']).get('mtls_platform_url') or '')")
@@ -730,7 +738,15 @@ spec:
                 "[log_paths]" \
                 "paths = /host/var/log/syslog,/host/var/log/auth.log,/host/var/log/nginx/*.log,/host/var/log/apache2/*.log" \
                 > /etc/las/agent.conf
-              MTLS_JSON=$(curl -fsSL "{platform_url}/api/v1/agents/bootstrap/mtls?hostname=$(hostname)" -H "Authorization: Bearer {token}")
+              BOOTSTRAP_URL="{platform_url}/api/v1/agents/bootstrap/mtls?hostname=$(hostname)"
+              set +e
+              MTLS_JSON=$(curl -fsSL "$BOOTSTRAP_URL" -H "Authorization: Bearer {token}")
+              CURL_CODE="$?"
+              set -e
+              if [ "$CURL_CODE" != "0" ] || [ -z "$MTLS_JSON" ]; then
+                echo "[LAS Agent] Falha ao baixar bundle mTLS via TLS padrao. Tentando bootstrap inseguro (somente nesta etapa)."
+                MTLS_JSON=$(curl -kfsSL "$BOOTSTRAP_URL" -H "Authorization: Bearer {token}")
+              fi
               export MTLS_JSON
               python -c "import json, os; from pathlib import Path; p=json.loads(os.environ['MTLS_JSON']); b=Path('/etc/las'); (b/'mtls-ca.pem').write_text(p['ca_pem'], encoding='ascii'); (b/'mtls-client.pem').write_text(p['client_cert_pem'], encoding='ascii'); (b/'mtls-client-key.pem').write_text(p['client_key_pem'], encoding='ascii'); mtls=p.get('mtls_platform_url') or '{settings.MTLS_PLATFORM_URL}'; conf=(b/'agent.conf'); conf.write_text(conf.read_text(encoding='utf-8').replace('__MTLS_PLATFORM_URL__', mtls), encoding='utf-8')"
               MTLS_PLATFORM_URL=$(python -c "import json, os; print(json.loads(os.environ['MTLS_JSON']).get('mtls_platform_url') or '')")
@@ -1091,7 +1107,15 @@ CONF
 bootstrap_mtls() {{
     echo -e "${{YELLOW}}Provisionando certificados mTLS...${{NC}}"
     HOSTNAME_VALUE=$(hostname -f 2>/dev/null || hostname)
-    RESPONSE=$(curl -fsSL "$PLATFORM_URL/api/v1/agents/bootstrap/mtls?hostname=${{HOSTNAME_VALUE}}" -H "Authorization: Bearer $AGENT_TOKEN")
+    BOOTSTRAP_URL="$PLATFORM_URL/api/v1/agents/bootstrap/mtls?hostname=${{HOSTNAME_VALUE}}"
+    set +e
+    RESPONSE=$(curl -fsSL "$BOOTSTRAP_URL" -H "Authorization: Bearer $AGENT_TOKEN")
+    CURL_CODE="$?"
+    set -e
+    if [ "$CURL_CODE" != "0" ] || [ -z "$RESPONSE" ]; then
+        echo -e "${{YELLOW}}Aviso: falha TLS ao baixar bundle mTLS. Tentando bootstrap inseguro (somente nesta etapa).${{NC}}"
+        RESPONSE=$(curl -kfsSL "$BOOTSTRAP_URL" -H "Authorization: Bearer $AGENT_TOKEN")
+    fi
     export LAS_MTLS_RESPONSE="$RESPONSE"
     python3 - <<'PY'
 import json
@@ -1535,10 +1559,21 @@ tcp_port = {syslog_tcp_port}
 tls_port = {syslog_tls_port}
 CONF
 
-RESPONSE=$(curl -fsSL --get "$PLATFORM_URL/api/v1/agents/bootstrap/mtls" \
+BOOTSTRAP_URL="$PLATFORM_URL/api/v1/agents/bootstrap/mtls"
+set +e
+RESPONSE=$(curl -fsSL --get "$BOOTSTRAP_URL" \
   -H "Authorization: Bearer $GATEWAY_TOKEN" \
   --data-urlencode "hostname=${{HOSTNAME_VALUE}}" \
   --data-urlencode "public_endpoint=${{PUBLIC_ENDPOINT}}")
+CURL_CODE="$?"
+set -e
+if [ "$CURL_CODE" != "0" ] || [ -z "$RESPONSE" ]; then
+  echo "[LAS Gateway] Aviso: falha TLS ao baixar bundle mTLS. Tentando bootstrap inseguro (somente nesta etapa)."
+  RESPONSE=$(curl -kfsSL --get "$BOOTSTRAP_URL" \
+    -H "Authorization: Bearer $GATEWAY_TOKEN" \
+    --data-urlencode "hostname=${{HOSTNAME_VALUE}}" \
+    --data-urlencode "public_endpoint=${{PUBLIC_ENDPOINT}}")
+fi
 export LAS_MTLS_RESPONSE="$RESPONSE"
 python3 - <<'PY'
 import json
@@ -1678,7 +1713,18 @@ $headers = @{{ "Authorization" = "Bearer $GATEWAY_TOKEN" }}
 Write-Progress -Activity "LAS Gateway" -Status "Provisionando certificados mTLS" -PercentComplete 15
 $hostnameValue = [System.Net.Dns]::GetHostByName(($env:COMPUTERNAME)).HostName
 $bootstrapUrl = "$PLATFORM_URL/api/v1/agents/bootstrap/mtls?hostname=$([uri]::EscapeDataString($hostnameValue))&public_endpoint=$([uri]::EscapeDataString($GATEWAY_PUBLIC_ENDPOINT))"
-$mtls = Invoke-RestMethod -Uri $bootstrapUrl -Headers $headers -Method Get
+try {{
+    $mtls = Invoke-RestMethod -Uri $bootstrapUrl -Headers $headers -Method Get
+}} catch {{
+    Write-Host "Aviso: falha TLS ao baixar bundle mTLS. Tentando bootstrap inseguro (somente nesta etapa)." -ForegroundColor Yellow
+    $oldCallback = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
+    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = {{ $true }}
+    try {{
+        $mtls = Invoke-RestMethod -Uri $bootstrapUrl -Headers $headers -Method Get
+    }} finally {{
+        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCallback
+    }}
+}}
 $mtls.ca_pem | Set-Content -LiteralPath "$CONFIG_DIR\\mtls-ca.pem" -Encoding Ascii
 $mtls.client_cert_pem | Set-Content -LiteralPath "$CONFIG_DIR\\mtls-client.pem" -Encoding Ascii
 $mtls.client_key_pem | Set-Content -LiteralPath "$CONFIG_DIR\\mtls-client-key.pem" -Encoding Ascii

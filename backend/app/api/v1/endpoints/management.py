@@ -34,6 +34,8 @@ from app.services.auth_service import hash_password
 from app.services.runtime_monitor import list_instance_metrics
 from app.services.gateway_routing import gateway_health
 from app.services.runtime_tasks import cancel_runtime_task, launch_runtime_task, run_network_discovery, run_snmp_get, run_snmp_refresh
+from app.services.mirror_tenant_service import ensure_mirror_tenant
+from app.services.license_service import tenant_license_codes
 
 router = APIRouter(tags=["management"])
 NETWORK_ASSET_TYPES = {"network", "switch", "router", "firewall", "ap", "hub", "access_point", "wifi", "wireless", "printer", "ups"}
@@ -377,6 +379,10 @@ async def create_tenant(
         must_change_password=True,
     )
     db.add(admin_user)
+
+    # Create mirror tenant (slug-0) for platform self-monitoring per customer.
+    # This is internal-only and visible to the superadmin for diagnostics/support.
+    await ensure_mirror_tenant(db, tenant)
     await db.commit()
     return {"status": "created", "tenant_id": tenant.id, "admin_user_id": admin_user.id}
 
@@ -827,6 +833,27 @@ async def update_host_settings(
     host = await db.get(Host, host_id)
     if not host or host.tenant_id != user.tenant_id:
         raise HTTPException(status_code=404, detail="Host not found")
+
+    tenant = await db.get(Tenant, user.tenant_id)
+    licenses = tenant_license_codes(tenant) if tenant else {"infra", "included"}
+    required: set[str] = set()
+    if payload.monitoring_mode in {"infra+otel"} or payload.otel_enabled or payload.apm_enabled:
+        required.add("complete")
+    if payload.ids_enabled:
+        required.add("sec")
+    if payload.vuln_scan_enabled:
+        required.add("vulnerability_hosts")
+    missing = sorted([code for code in required if code not in licenses])
+    if missing:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "message": "Funcionalidade nao licenciada para este tenant",
+                "missing_licenses": missing,
+                "licenses": sorted(licenses),
+            },
+        )
+
     host.monitoring_mode = payload.monitoring_mode
     host.otel_enabled = payload.otel_enabled
     host.log_collection = payload.log_collection

@@ -19,6 +19,7 @@ from .extension import Extension, ExtensionConfig
 from .audit import AuditLog
 from .ticket import Ticket, TicketMessage
 from .rum import RumSession, RumEvent
+from .license import LicenseKey
 
 __all__ = [
     "Tenant", "User", "Session",
@@ -38,4 +39,5 @@ __all__ = [
     "AuditLog",
     "Ticket", "TicketMessage",
     "RumSession", "RumEvent",
+    "LicenseKey",
 ]

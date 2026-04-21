@@ -62,6 +62,12 @@ GATEWAY_TYPE_CATALOG: dict[str, dict] = {
         "modules": ["ids", "pentest", "network_discovery", "snmp", "security_events"],
         "license": "sec",
     },
+    "control": {
+        "label": "Gateway de Controle (On-Prem)",
+        "description": "Conecta o ambiente on-prem ao SaaS para licencas, updates, diagnosticos e auto-tickets.",
+        "modules": ["control_plane", "logs"],
+        "license": "infra",
+    },
 }
 
 PLAN_LICENSES: dict[str, set[str]] = {

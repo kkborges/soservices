@@ -299,6 +299,70 @@ def start_syslog_listeners(config: configparser.ConfigParser) -> None:
         ).start()
 
 
+def edge_control_enabled(config: configparser.ConfigParser) -> bool:
+    section = primary_config_section(config)
+    gateway_type = config.get(section, "type", fallback="agents").strip().lower()
+    if gateway_type == "control":
+        return True
+    if config.has_section("edge") and config.getboolean("edge", "enabled", fallback=False):
+        return True
+    return False
+
+
+def edge_control_loop(config: configparser.ConfigParser) -> None:
+    """
+    On-prem "control gateway" loop:
+    - periodically sync licensing/update instructions with SaaS (/api/v1/edge/sync)
+    - auto-open a ticket when the control plane loses connectivity for too long
+
+    This runs only when gateway `type=control` (or [edge] enabled=true).
+    """
+    token = get_gateway_token(config)
+    ssl_context = build_client_ssl_context(config)
+    base_url = config.get("mtls", "platform_url", fallback=get_platform_url(config)).rstrip("/")
+    sync_url = f"{base_url}/api/v1/edge/sync"
+    ticket_url = f"{base_url}/api/v1/edge/tickets"
+    interval = max(config.getint("edge", "sync_interval", fallback=300), 60)
+
+    failures = 0
+    last_ticket = 0.0
+    while True:
+        time.sleep(interval)
+        try:
+            payload = get_json(sync_url, token, ssl_context=ssl_context)
+            failures = 0
+            license_info = payload.get("license") or {}
+            expires_at = license_info.get("expires_at")
+            if expires_at:
+                LOG.info("edge sync ok; license expires_at=%s", expires_at)
+            else:
+                LOG.info("edge sync ok")
+        except Exception as exc:  # pragma: no cover
+            failures += 1
+            LOG.warning("edge sync failed (%s): %s", failures, exc)
+            # After repeated failures, open a single ticket per hour.
+            if failures >= 3 and time.time() - last_ticket >= 3600:
+                try:
+                    post_json(
+                        ticket_url,
+                        token,
+                        {
+                            "title": "Falha de comunicacao Edge (on-prem -> SaaS)",
+                            "severity": "high",
+                            "category": "platform",
+                            "description": f"O control gateway nao conseguiu sincronizar com o SaaS. Ultimo erro: {exc}",
+                            "environment": "onprem",
+                            "service_name": "las-control-gateway",
+                            "attachments": [],
+                        },
+                        ssl_context=ssl_context,
+                    )
+                    last_ticket = time.time()
+                    LOG.warning("edge auto-ticket created after repeated sync failures")
+                except Exception as ticket_exc:  # pragma: no cover
+                    LOG.warning("edge auto-ticket failed: %s", ticket_exc)
+
+
 def syslog_listener_guard(proto: str, target, host: str, port: int) -> None:
     try:
         target(host, port)
@@ -945,6 +1009,8 @@ def main() -> int:
     threading.Thread(target=flush_batches, args=(config,), daemon=True).start()
     threading.Thread(target=gateway_task_loop, args=(config,), daemon=True).start()
     threading.Thread(target=update_loop, args=(config,), daemon=True).start()
+    if edge_control_enabled(config):
+        threading.Thread(target=edge_control_loop, args=(config,), daemon=True).start()
     server = ThreadingHTTPServer((listen_host, listen_port), GatewayHandler)
     server_ssl_context = build_server_ssl_context(config)
     if server_ssl_context:

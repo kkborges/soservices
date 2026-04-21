@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "LAS Plataforma de Monitoramento e Observabilidade"
     APP_VERSION: str = "4.1.0"
     DEBUG: bool = False
+    API_DOCS_ENABLED: bool = True
     SECRET_KEY: str = secrets.token_urlsafe(64)
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60

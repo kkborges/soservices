@@ -32,9 +32,9 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description="LAS Plataforma de Monitoramento de Infraestrutura e Observabilidade",
-    openapi_url="/api/openapi.json" if settings.DEBUG else None,
-    docs_url="/api/docs" if settings.DEBUG else None,
-    redoc_url="/api/redoc" if settings.DEBUG else None,
+    openapi_url="/api/openapi.json" if settings.API_DOCS_ENABLED else None,
+    docs_url="/api/docs" if settings.API_DOCS_ENABLED else None,
+    redoc_url="/api/redoc" if settings.API_DOCS_ENABLED else None,
     lifespan=lifespan,
 )
 
