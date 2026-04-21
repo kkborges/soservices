@@ -124,8 +124,10 @@ services:
     image: redis:7-alpine
     container_name: redis-sentinel-0
     restart: unless-stopped
+    env_file:
+      - .env
     command: >
-      sh -c "printf 'port 26379\nbind 0.0.0.0\nsentinel monitor lasmaster redis-node-0 6379 2\nsentinel auth-pass lasmaster ${REDIS_PASSWORD:-redis_password}\nsentinel down-after-milliseconds lasmaster 5000\nsentinel failover-timeout lasmaster 10000\nsentinel parallel-syncs lasmaster 1\nsentinel resolve-hostnames yes\n' > /tmp/sentinel.conf && redis-server /tmp/sentinel.conf --sentinel"
+      sh -c "set -eu; PW=\"$${REDIS_PASSWORD:-redis_password}\"; printf 'port 26379\\nbind 0.0.0.0\\nsentinel monitor lasmaster redis-node-0 6379 2\\nsentinel auth-pass lasmaster %s\\nsentinel down-after-milliseconds lasmaster 5000\\nsentinel failover-timeout lasmaster 10000\\nsentinel parallel-syncs lasmaster 1\\nsentinel resolve-hostnames yes\\n' \"$$PW\" > /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel"
     networks:
       - las-net
     depends_on:
@@ -137,8 +139,10 @@ services:
     image: redis:7-alpine
     container_name: redis-sentinel-1
     restart: unless-stopped
+    env_file:
+      - .env
     command: >
-      sh -c "printf 'port 26379\nbind 0.0.0.0\nsentinel monitor lasmaster redis-node-0 6379 2\nsentinel auth-pass lasmaster ${REDIS_PASSWORD:-redis_password}\nsentinel down-after-milliseconds lasmaster 5000\nsentinel failover-timeout lasmaster 10000\nsentinel parallel-syncs lasmaster 1\nsentinel resolve-hostnames yes\n' > /tmp/sentinel.conf && redis-server /tmp/sentinel.conf --sentinel"
+      sh -c "set -eu; PW=\"$${REDIS_PASSWORD:-redis_password}\"; printf 'port 26379\\nbind 0.0.0.0\\nsentinel monitor lasmaster redis-node-0 6379 2\\nsentinel auth-pass lasmaster %s\\nsentinel down-after-milliseconds lasmaster 5000\\nsentinel failover-timeout lasmaster 10000\\nsentinel parallel-syncs lasmaster 1\\nsentinel resolve-hostnames yes\\n' \"$$PW\" > /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel"
     networks:
       - las-net
     depends_on:
@@ -150,8 +154,10 @@ services:
     image: redis:7-alpine
     container_name: redis-sentinel-2
     restart: unless-stopped
+    env_file:
+      - .env
     command: >
-      sh -c "printf 'port 26379\nbind 0.0.0.0\nsentinel monitor lasmaster redis-node-0 6379 2\nsentinel auth-pass lasmaster ${REDIS_PASSWORD:-redis_password}\nsentinel down-after-milliseconds lasmaster 5000\nsentinel failover-timeout lasmaster 10000\nsentinel parallel-syncs lasmaster 1\nsentinel resolve-hostnames yes\n' > /tmp/sentinel.conf && redis-server /tmp/sentinel.conf --sentinel"
+      sh -c "set -eu; PW=\"$${REDIS_PASSWORD:-redis_password}\"; printf 'port 26379\\nbind 0.0.0.0\\nsentinel monitor lasmaster redis-node-0 6379 2\\nsentinel auth-pass lasmaster %s\\nsentinel down-after-milliseconds lasmaster 5000\\nsentinel failover-timeout lasmaster 10000\\nsentinel parallel-syncs lasmaster 1\\nsentinel resolve-hostnames yes\\n' \"$$PW\" > /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel"
     networks:
       - las-net
     depends_on:
