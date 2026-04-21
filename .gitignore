@@ -31,6 +31,8 @@ venv/
 # Env / secrets
 .env
 .env.*
+!.env.example
+!docker/.env.example
 *.pem
 *.key
 *.crt

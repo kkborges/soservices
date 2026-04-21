@@ -47,8 +47,8 @@ Arquivo: `docker/docker-compose.yml`
 
 ```bash
 cd docker
-docker compose up -d --build
-docker compose ps
+docker-compose up -d --build
+docker-compose ps
 ```
 
 Health:
@@ -67,9 +67,13 @@ Arquivo: `docker/docker-compose.ha.yml`
 
 ```bash
 cd docker
-docker compose -f docker-compose.ha.yml up -d --build
-docker compose -f docker-compose.ha.yml ps
+cp .env.example .env
+# Edite .env com segredos fortes e NAO rotacione depois que volumes do Postgres/Redis forem criados.
+docker-compose -f docker-compose.ha.yml up -d --build
+docker-compose -f docker-compose.ha.yml ps
 ```
+
+Importante: em modo HA, nao suba junto o `docker-compose.yml` (single node), para evitar dois Postgres diferentes e confusao de portas/enderecos.
 
 ### 3.3 Dados em HA (PostgreSQL + Redis)
 
@@ -80,14 +84,17 @@ Arquivo: `docker/docker-compose.data-ha.yml`
 
 ```bash
 cd docker
-docker compose -f docker-compose.data-ha.yml up -d
-docker compose -f docker-compose.data-ha.yml ps
+cp .env.example .env
+docker-compose -f docker-compose.data-ha.yml up -d
+docker-compose -f docker-compose.data-ha.yml ps
 ```
 
 Notas:
 
 - Para producao, priorize Postgres/Redis gerenciados quando possivel.
 - Para desenho completo, veja: [FAILOVER-PRODUCAO.md](FAILOVER-PRODUCAO.md).
+- Se voce ver erro `password authentication failed for user "repmgr"`, isso indica rotacao de `REPMGR_PASSWORD` depois que o volume ja existia.
+  Use o script [scripts/fix-data-ha-repmgr-auth.sh](../scripts/fix-data-ha-repmgr-auth.sh) no host Docker para alinhar a senha sem apagar volumes.
 
 ## 4) Deploy por Kubernetes (Visao Geral)
 

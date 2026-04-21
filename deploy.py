@@ -66,13 +66,33 @@ def copy_application():
     """Copy application files to deployment path."""
     log("Copying application files...")
     try:
+        def _preserve_text_file(path: Path):
+            if path.exists() and path.is_file():
+                try:
+                    return path.read_text(encoding="utf-8", errors="replace")
+                except Exception:
+                    # Fallback: keep bytes if some env has non-utf8 chars
+                    return path.read_bytes()
+            return None
+
+        def _restore_text_file(path: Path, content):
+            if content is None:
+                return
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(content, (bytes, bytearray)):
+                path.write_bytes(content)
+            else:
+                path.write_text(content, encoding="utf-8")
+
         # Copy backend
         src_backend = SOURCE_PATH / "backend"
         dst_backend = DEPLOYMENT_PATH / "backend"
         if src_backend.exists():
+            preserved_backend_env = _preserve_text_file(dst_backend / ".env")
             if dst_backend.exists():
                 shutil.rmtree(dst_backend)
             shutil.copytree(src_backend, dst_backend)
+            _restore_text_file(dst_backend / ".env", preserved_backend_env)
             log(f"Backend copied to {dst_backend}")
         
         # Copy frontend
@@ -88,9 +108,13 @@ def copy_application():
         src_docker = SOURCE_PATH / "docker"
         dst_docker = DEPLOYMENT_PATH / "docker"
         if src_docker.exists():
+            # Never wipe an existing docker/.env on redeploy. Rotating secrets after
+            # Postgres/Redis volumes are initialized breaks HA (ex: repmgr auth loops).
+            preserved_docker_env = _preserve_text_file(dst_docker / ".env")
             if dst_docker.exists():
                 shutil.rmtree(dst_docker)
             shutil.copytree(src_docker, dst_docker)
+            _restore_text_file(dst_docker / ".env", preserved_docker_env)
             log(f"Docker configs copied to {dst_docker}")
         
         return True
