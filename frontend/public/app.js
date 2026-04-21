@@ -418,6 +418,8 @@ async function renderPlatformLicensing() {
       esc(tenant.name),
       status(tenant.status),
       esc(tenant.plan),
+      num(tenant.consumption.hosts_infra ?? (tenant.consumption.hosts || 0)),
+      num(tenant.consumption.hosts_full ?? 0),
       num(tenant.consumption.hosts),
       num(tenant.consumption.network_assets),
       num(tenant.consumption.users),
@@ -427,7 +429,7 @@ async function renderPlatformLicensing() {
   render(`
     <article class="card">
       <h3>Licenciamento e consumo por tenant</h3>
-      ${licenseRows.length ? table(["Tenant", "Status", "Plano", "Hosts", "Ativos", "Usuarios", "Sinteticos", "Unidades"], licenseRows) : `<p class="muted">Nenhum tenant cliente disponivel.</p>`}
+      ${licenseRows.length ? table(["Tenant", "Status", "Plano", "Hosts Infra", "Hosts Full", "Hosts Total", "Ativos", "Usuarios", "Sinteticos", "Unidades"], licenseRows) : `<p class="muted">Nenhum tenant cliente disponivel.</p>`}
       <p class="muted">O tenant demo concentra o painel operacional atual. O superadmin observa clientes e consumo global.</p>
     </article>
   `);

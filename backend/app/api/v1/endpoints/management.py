@@ -163,9 +163,17 @@ async def admin_overview(
     tenants_result = await db.execute(select(Tenant).order_by(Tenant.name))
     tenants = tenants_result.scalars().all()
 
-    host_counts = dict(
-        (await db.execute(select(Host.tenant_id, func.count(Host.id)).group_by(Host.tenant_id))).all()
-    )
+    host_count_rows = (
+        await db.execute(
+            select(
+                Host.tenant_id,
+                func.count(Host.id),
+                func.count(Host.id).filter(or_(Host.otel_enabled == True, Host.apm_enabled == True, Host.monitoring_mode == "infra+otel")),
+            ).group_by(Host.tenant_id)
+        )
+    ).all()
+    host_counts = {row[0]: int(row[1] or 0) for row in host_count_rows}
+    host_full_counts = {row[0]: int(row[2] or 0) for row in host_count_rows}
     asset_counts = dict(
         (await db.execute(select(NetworkAsset.tenant_id, func.count(NetworkAsset.id)).group_by(NetworkAsset.tenant_id))).all()
     )
@@ -181,6 +189,8 @@ async def admin_overview(
         internal = bool((tenant.settings or {}).get("internal_platform"))
         consumption = {
             "hosts": int(host_counts.get(tenant.id, 0)),
+            "hosts_full": int(host_full_counts.get(tenant.id, 0)),
+            "hosts_infra": max(0, int(host_counts.get(tenant.id, 0)) - int(host_full_counts.get(tenant.id, 0))),
             "network_assets": int(asset_counts.get(tenant.id, 0)),
             "users": int(user_counts.get(tenant.id, 0)),
             "synthetics": int(synthetic_counts.get(tenant.id, 0)),
@@ -837,7 +847,8 @@ async def update_host_settings(
     tenant = await db.get(Tenant, user.tenant_id)
     licenses = tenant_license_codes(tenant) if tenant else {"infra", "included"}
     required: set[str] = set()
-    if payload.monitoring_mode in {"infra+otel"} or payload.otel_enabled or payload.apm_enabled:
+    want_full = payload.monitoring_mode in {"infra+otel"} or payload.otel_enabled or payload.apm_enabled
+    if want_full:
         required.add("complete")
     if payload.ids_enabled:
         required.add("sec")
@@ -853,6 +864,36 @@ async def update_host_settings(
                 "licenses": sorted(licenses),
             },
         )
+
+    # Optional hard limits (SaaS and on-prem): can live in tenant.settings.limits or be provisioned by edge sync.
+    limits = (tenant.settings or {}).get("limits") if tenant and isinstance(tenant.settings, dict) else {}
+    if not isinstance(limits, dict):
+        limits = {}
+    max_hosts_full = int(limits.get("max_hosts_full") or 0)
+    if want_full and max_hosts_full > 0:
+        current_full = bool(host.otel_enabled or host.apm_enabled or host.monitoring_mode == "infra+otel")
+        if not current_full:
+            full_count = (
+                await db.execute(
+                    select(func.count(Host.id)).where(
+                        Host.tenant_id == user.tenant_id,
+                        or_(
+                            Host.otel_enabled == True,
+                            Host.apm_enabled == True,
+                            Host.monitoring_mode == "infra+otel",
+                        ),
+                    )
+                )
+            ).scalar_one_or_none() or 0
+            if int(full_count) + 1 > max_hosts_full:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "message": "Limite de hosts completos (OTel/APM) excedido para este tenant",
+                        "limit": max_hosts_full,
+                        "current": int(full_count),
+                    },
+                )
 
     host.monitoring_mode = payload.monitoring_mode
     host.otel_enabled = payload.otel_enabled
