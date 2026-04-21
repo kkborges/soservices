@@ -50,12 +50,22 @@ async def get_db():
 
 async def init_db():
     from app.services.seed_service import ensure_initial_data
+    from app.services.mtls_service import issue_api_server_certificate
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await ensure_schema_migrations(conn)
     async with AsyncSessionLocal() as session:
         await ensure_initial_data(session)
+
+    # Ensure the mTLS CA and API server certificate exist on disk for the mTLS edge proxy.
+    # This is safe and idempotent and avoids shipping certificate artifacts inside git.
+    try:
+        issue_api_server_certificate()
+    except Exception:
+        # Avoid blocking startup: the platform can still run without mTLS edge on first boot,
+        # but installers will require this to be healthy.
+        pass
 
 
 async def ensure_schema_migrations(conn):

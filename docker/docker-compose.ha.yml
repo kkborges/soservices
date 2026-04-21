@@ -18,7 +18,7 @@ services:
       POSTGRES_PORT: 5432
       POSTGRES_DB: las
       POSTGRES_USER: las
-      REDIS_HOST: las-redis
+      REDIS_HOST: redis-haproxy
       REDIS_PORT: 6379
       REDIS_SENTINELS: redis-sentinel-0:26379,redis-sentinel-1:26379,redis-sentinel-2:26379
       REDIS_MASTER_NAME: lasmaster
@@ -52,7 +52,7 @@ services:
       POSTGRES_PORT: 5432
       POSTGRES_DB: las
       POSTGRES_USER: las
-      REDIS_HOST: las-redis
+      REDIS_HOST: redis-haproxy
       REDIS_PORT: 6379
       REDIS_SENTINELS: redis-sentinel-0:26379,redis-sentinel-1:26379,redis-sentinel-2:26379
       REDIS_MASTER_NAME: lasmaster
