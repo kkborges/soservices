@@ -299,20 +299,27 @@ def issue_api_server_certificate() -> tuple[Path, Path, Path]:
     ca_cert, ca_key = ensure_ca()
     cert_path = _storage_dir() / "api-server.cert.pem"
     key_path = _storage_dir() / "api-server.key.pem"
+    from urllib.parse import urlparse
+
+    api_host = urlparse(settings.PLATFORM_URL).hostname or "api.soservices.com.br"
+    mtls_host = urlparse(settings.MTLS_PLATFORM_URL).hostname
+    dns_names = [api_host, "localhost"]
+    if mtls_host and mtls_host not in dns_names:
+        dns_names.append(mtls_host)
     _issue_certificate(
         cert_path=cert_path,
         key_path=key_path,
         subject=x509.Name(
             [
                 x509.NameAttribute(NameOID.ORGANIZATION_NAME, "SOServices"),
-                x509.NameAttribute(NameOID.COMMON_NAME, "api.soservices.com.br"),
+                x509.NameAttribute(NameOID.COMMON_NAME, api_host),
             ]
         ),
         issuer_cert=ca_cert,
         issuer_key=ca_key,
         client_auth=False,
         server_auth=True,
-        dns_names=["api.soservices.com.br", "mtls-api.soservices.com.br", "localhost", "192.168.0.108"],
-        ip_addrs=["127.0.0.1", "192.168.0.108"],
+        dns_names=dns_names,
+        ip_addrs=["127.0.0.1"],
     )
     return _ca_cert_path(), cert_path, key_path

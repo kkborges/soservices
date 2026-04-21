@@ -1,5 +1,5 @@
 """
-Nexus Platform — Celery Application
+LAS Platform — Celery Application
 Workers para: AI analysis, baselines, alertas, testes sintéticos, coleta de métricas
 """
 from celery import Celery
@@ -7,7 +7,7 @@ from celery.schedules import crontab
 from app.core.config import settings
 
 celery_app = Celery(
-    "nexus",
+    "las",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
     include=[

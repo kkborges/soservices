@@ -2,6 +2,8 @@ from .tenant import Tenant
 from .user import User, Session
 from .host import Host, HostMetric
 from .agent import AgentToken
+
+Agent = AgentToken
 from .gateway import Gateway
 from .network import NetworkAsset, NetworkPort, NetworkMetric
 from .alert import Alert, AlertRule
@@ -20,7 +22,7 @@ from .rum import RumSession, RumEvent
 
 __all__ = [
     "Tenant", "User", "Session",
-    "Host", "HostMetric", "AgentToken",
+    "Host", "HostMetric", "Agent", "AgentToken",
     "Gateway",
     "NetworkAsset", "NetworkPort", "NetworkMetric",
     "Alert", "AlertRule",

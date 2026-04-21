@@ -16,13 +16,14 @@ celery[redis]
 flower
 
 # ─── Auth & Security ────────────────────────────────────────────
+PyJWT
 python-jose[cryptography]
 passlib[bcrypt]
 python-multipart
 pyotp
 
 # ─── HTTP Client (agents / synthetic tests / webhooks) ──────────
-httpx
+httpx<0.28
 aiohttp
 
 # ─── AI / LLM ───────────────────────────────────────────────────
@@ -65,6 +66,7 @@ pyVmomi
 # ─── Utilities ──────────────────────────────────────────────────
 pydantic
 pydantic-settings
+email-validator
 python-dotenv
 apscheduler
 croniter
@@ -73,6 +75,7 @@ arrow
 rich
 typer
 prometheus-client
+python-json-logger
 psutil
 paramiko
 netmiko

@@ -19,10 +19,10 @@ services:
     env_file:
       - .env
     environment:
-      POSTGRESQL_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus_password_change_me}
-      POSTGRESQL_USERNAME: ${POSTGRES_USER:-nexus}
-      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-nexus_password_change_me}
-      POSTGRESQL_DATABASE: ${POSTGRES_DB:-nexus}
+      POSTGRESQL_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-las_password_change_me}
+      POSTGRESQL_USERNAME: ${POSTGRES_USER:-las}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-las_password_change_me}
+      POSTGRESQL_DATABASE: ${POSTGRES_DB:-las}
       REPMGR_PASSWORD: ${REPMGR_PASSWORD:-repmgr_password_change_me}
       REPMGR_PRIMARY_HOST: pg-0
       REPMGR_PARTNER_NODES: pg-0,pg-1
@@ -40,10 +40,10 @@ services:
     env_file:
       - .env
     environment:
-      POSTGRESQL_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus_password_change_me}
-      POSTGRESQL_USERNAME: ${POSTGRES_USER:-nexus}
-      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-nexus_password_change_me}
-      POSTGRESQL_DATABASE: ${POSTGRES_DB:-nexus}
+      POSTGRESQL_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-las_password_change_me}
+      POSTGRESQL_USERNAME: ${POSTGRES_USER:-las}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-las_password_change_me}
+      POSTGRESQL_DATABASE: ${POSTGRES_DB:-las}
       REPMGR_PASSWORD: ${REPMGR_PASSWORD:-repmgr_password_change_me}
       REPMGR_PRIMARY_HOST: pg-0
       REPMGR_PARTNER_NODES: pg-0,pg-1
@@ -67,11 +67,11 @@ services:
       PGPOOL_SR_CHECK_USER: repmgr
       PGPOOL_SR_CHECK_PASSWORD: ${REPMGR_PASSWORD:-repmgr_password_change_me}
       PGPOOL_POSTGRES_USERNAME: postgres
-      PGPOOL_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus_password_change_me}
+      PGPOOL_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-las_password_change_me}
       PGPOOL_ADMIN_USERNAME: ${PGPOOL_ADMIN_USERNAME:-admin}
       PGPOOL_ADMIN_PASSWORD: ${PGPOOL_ADMIN_PASSWORD:-pgpool_admin_change_me}
-      PGPOOL_POSTGRES_CUSTOM_USERS: ${POSTGRES_USER:-nexus}
-      PGPOOL_POSTGRES_CUSTOM_PASSWORDS: ${POSTGRES_PASSWORD:-nexus_password_change_me}
+      PGPOOL_POSTGRES_CUSTOM_USERS: ${POSTGRES_USER:-las}
+      PGPOOL_POSTGRES_CUSTOM_PASSWORDS: ${POSTGRES_PASSWORD:-las_password_change_me}
       PGPOOL_ENABLE_LOAD_BALANCING: "no"
       PGPOOL_PARAMS_FAILOVER_ON_BACKEND_ERROR: "on"
       PGPOOL_PARAMS_FAILOVER_ON_BACKEND_SHUTDOWN: "on"

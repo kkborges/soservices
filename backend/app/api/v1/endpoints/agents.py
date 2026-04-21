@@ -82,9 +82,9 @@ NETWORK_DESCRIPTION_KEYWORDS = {
     "gateway",
 }
 AGENT_ARTIFACTS = {
-    "linux-agent.py": ROOT_DIR / "agents" / "shared" / "nexus_agent.py",
-    "windows-agent.py": ROOT_DIR / "agents" / "shared" / "nexus_agent.py",
-    "gateway.py": ROOT_DIR / "agents" / "shared" / "nexus_gateway.py",
+    "linux-agent.py": ROOT_DIR / "agents" / "shared" / "las_agent.py",
+    "windows-agent.py": ROOT_DIR / "agents" / "shared" / "las_agent.py",
+    "gateway.py": ROOT_DIR / "agents" / "shared" / "las_gateway.py",
     "linux-agent.bin": ROOT_DIR / "releases" / "las-agent-linux-x64.bin",
     "windows-agent.exe": ROOT_DIR / "releases" / "las-agent-windows-x64.exe",
     "LASAgentSetup.exe": ROOT_DIR / "releases" / "LASAgentSetup.exe",
@@ -996,7 +996,7 @@ from opentelemetry.sdk.resources import Resource
 
 resource = Resource(attributes={{
     "service.name": "{service_name or 'my-service'}",
-    "nexus.token": "{token.token}",
+    "las.token": "{token.token}",
 }})
 
 provider = TracerProvider(resource=resource)
@@ -1021,7 +1021,7 @@ const {{ Resource }} = require('@opentelemetry/resources');
 const sdk = new NodeSDK({{
   resource: new Resource({{
     'service.name': '{service_name or 'my-service'}',
-    'nexus.token': '{token.token}',
+    'las.token': '{token.token}',
   }}),
   traceExporter: new OTLPTraceExporter({{
     url: '{otel_endpoint}/traces',

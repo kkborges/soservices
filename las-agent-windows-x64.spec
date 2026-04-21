@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['agents\\shared\\nexus_agent.py'],
+    ['agents\\shared\\las_agent.py'],
     pathex=[],
     binaries=[],
     datas=[],

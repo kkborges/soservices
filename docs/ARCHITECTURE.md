@@ -181,7 +181,7 @@ location /api/v1 {
     if ($ssl_client_verify != SUCCESS) {
         return 496;  # Invalid client certificate
     }
-    proxy_pass http://nexus-api;
+    proxy_pass http://las-api;
 }
 ```
 
@@ -546,7 +546,7 @@ Requests cert from /api/agents/bootstrap/mtls (HTTP)
      ↓
 API generates cert + CA
      ↓
-Agent stores locally (/var/run/nexus/cert.pem)
+Agent stores locally (/var/run/las/cert.pem)
      ↓
 Subsequent connections use mTLS (port 8443)
      ↓

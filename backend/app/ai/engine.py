@@ -1,5 +1,5 @@
 """
-Nexus AI Engine — Autonomous AI for analysis, baselines, security and traces.
+LAS AI Engine — Autonomous AI for analysis, baselines, security and traces.
 Supports OpenAI, Anthropic, Gemini (configurable per tenant or globally).
 """
 from typing import Optional, Dict, Any, List
@@ -87,7 +87,7 @@ class AIEngine:
 
     async def analyze_anomaly(self, context: Dict[str, Any]) -> Dict[str, str]:
         """Analyze a metric anomaly and provide root cause + recommendations."""
-        system = """You are an expert SRE/DevOps AI assistant for Nexus Platform.
+        system = """You are an expert SRE/DevOps AI assistant for LAS Platform.
 Analyze infrastructure anomalies and provide:
 1. A brief summary (1-2 sentences)
 2. Likely root cause
@@ -116,7 +116,7 @@ Always respond in the same language as the context (pt-BR if Portuguese data is 
 
     async def analyze_security_event(self, context: Dict[str, Any]) -> Dict[str, str]:
         """Analyze IDS alerts and security events for threat intelligence."""
-        system = """You are a cybersecurity AI analyst for Nexus Platform.
+        system = """You are a cybersecurity AI analyst for LAS Platform.
 Analyze security events and IDS alerts. Provide:
 1. Summary of the threat
 2. Threat level assessment (critical/high/medium/low/info)
@@ -148,7 +148,7 @@ Respond in JSON format:
 
     async def analyze_trace(self, context: Dict[str, Any]) -> Dict[str, str]:
         """Analyze OTel traces to explain errors and suggest fixes."""
-        system = """You are an expert distributed systems / APM AI for Nexus Platform.
+        system = """You are an expert distributed systems / APM AI for LAS Platform.
 Analyze application traces and explain:
 1. What happened (plain language summary)
 2. Root cause of the error/latency

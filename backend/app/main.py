@@ -1,5 +1,5 @@
 """
-Nexus Platform v4.0 — FastAPI Application Entry Point
+LAS Platform — FastAPI Application Entry Point
 """
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
-    description="Enterprise Infrastructure Monitoring & AI Observability Platform",
+    description="LAS Plataforma de Monitoramento de Infraestrutura e Observabilidade",
     openapi_url="/api/openapi.json" if settings.DEBUG else None,
     docs_url="/api/docs" if settings.DEBUG else None,
     redoc_url="/api/redoc" if settings.DEBUG else None,

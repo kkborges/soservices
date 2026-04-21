@@ -1,5 +1,5 @@
 """
-Nexus Platform v4 — Core Configuration
+LAS Platform — Core Configuration
 """
 import secrets
 from typing import List, Optional
@@ -34,9 +34,9 @@ class Settings(BaseSettings):
     # ── Database ───────────────────────────────────────────────────
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432
-    POSTGRES_DB: str = "nexus"
-    POSTGRES_USER: str = "nexus"
-    POSTGRES_PASSWORD: str = "nexus_password"
+    POSTGRES_DB: str = "las"
+    POSTGRES_USER: str = "las"
+    POSTGRES_PASSWORD: str = "las_password_change_me"
 
     @property
     def DATABASE_URL(self) -> str:
@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     SMTP_PORT: int = 587
     SMTP_USER: Optional[str] = None
     SMTP_PASSWORD: Optional[str] = None
-    SMTP_FROM: str = "nexus@yourdomain.com"
+    SMTP_FROM: str = "las@yourdomain.com"
     SMTP_TLS: bool = True
 
     # ── Notification Channels ──────────────────────────────────────
@@ -134,8 +134,8 @@ class Settings(BaseSettings):
     OTEL_COLLECTOR_HTTP: str = "localhost:4318"
 
     # ── Agent / Gateway tokens ─────────────────────────────────────
-    AGENT_TOKEN_PREFIX: str = "nxa"
-    GATEWAY_TOKEN_PREFIX: str = "nxg"
+    AGENT_TOKEN_PREFIX: str = "lsa"
+    GATEWAY_TOKEN_PREFIX: str = "lsg"
 
     # Initial bootstrap
     INITIAL_TENANT_NAME: str = "SOServices Platform Admin"
@@ -168,6 +168,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "ignore"
 
 
 settings = Settings()

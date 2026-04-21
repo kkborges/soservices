@@ -1,5 +1,5 @@
 #!/bin/bash
-# Script para executar testes corretamente no servidor Nexus
+# Script para executar testes corretamente no servidor LAS
 
 set -e
 
@@ -19,7 +19,7 @@ export PYTHONPATH="$BACKEND_DIR:$PYTHONPATH"
 cd "$BACKEND_DIR"
 
 # Run tests with proper path
-echo "🧪 Running Nexus Tests..."
+echo "🧪 Running LAS Tests..."
 echo "📍 Project Root: $PROJECT_ROOT"
 echo "📍 Backend Dir: $BACKEND_DIR"
 echo "📍 PYTHONPATH: $PYTHONPATH"

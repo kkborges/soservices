@@ -324,8 +324,8 @@ def write_text_ascii(path: Path, content: str) -> None:
 def build_agent_config(config: InstallerConfig) -> str:
     gateway_urls = ",".join(config.gateway_urls)
     return (
-        "[nexus]\n"
-        f"nexus_url = {config.platform_url}\n"
+        "[las]\n"
+        f"platform_url = {config.platform_url}\n"
         f"agent_token = {config.token}\n"
         f"role = {config.role}\n"
         f"log_dir = {config.log_dir}\n"
@@ -364,8 +364,8 @@ def build_agent_config(config: InstallerConfig) -> str:
 
 def build_gateway_config(config: InstallerConfig) -> str:
     return (
-        "[nexus]\n"
-        f"nexus_url = {config.platform_url}\n"
+        "[las]\n"
+        f"platform_url = {config.platform_url}\n"
         f"gateway_token = {config.token}\n"
         f"type = {config.gateway_type}\n"
         "listen_host = 0.0.0.0\n"
@@ -512,7 +512,7 @@ def install(config: InstallerConfig, ui: ProgressUI) -> None:
     run_command([str(nssm_path), "set", config.service_name, "AppStdout", str(log_dir / ("gateway.log" if config.kind == "gateway" else "agent.log"))])
     run_command([str(nssm_path), "set", config.service_name, "AppStderr", str(log_dir / ("gateway-error.log" if config.kind == "gateway" else "agent-error.log"))])
     run_command([str(nssm_path), "set", config.service_name, "Start", "SERVICE_AUTO_START"])
-    run_command([str(nssm_path), "set", config.service_name, "AppEnvironmentExtra", f"NEXUS_CONFIG={config_path}"])
+    run_command([str(nssm_path), "set", config.service_name, "AppEnvironmentExtra", f"LAS_CONFIG={config_path}"])
 
     ui.update(94, "Iniciando servico")
     run_command(["sc.exe", "start", config.service_name], check=False)

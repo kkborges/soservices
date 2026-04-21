@@ -1,8 +1,8 @@
 FROM python:3.12-slim
 
-LABEL maintainer="Nexus Platform"
+LABEL maintainer="LAS Plataforma de Monitoramento e Observabilidade"
 LABEL version="4.0.0"
-LABEL description="Nexus Platform Backend — FastAPI + Celery"
+LABEL description="LAS Platform Backend - FastAPI + Celery"
 
 # System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -35,10 +35,10 @@ RUN playwright install chromium --with-deps 2>/dev/null || true
 COPY . .
 
 # Create non-root user
-RUN adduser --disabled-password --gecos '' nexus && \
-    chown -R nexus:nexus /app
+RUN adduser --disabled-password --gecos '' las && \
+    chown -R las:las /app
 
-USER nexus
+USER las
 
 # Run with gunicorn + uvicorn workers. Default to a single worker because
 # schema bootstrap currently happens during app startup.

@@ -1,4 +1,4 @@
-# Nexus Frontend
+# LAS Frontend
 
 Este diretório não contém mais a aplicação `Cloudflare Pages + D1` descrita na documentação anterior. O código original da UI não veio no workspace atual.
 
@@ -17,5 +17,5 @@ Para subir junto com a stack:
 
 ```bash
 cd docker
-docker compose up -d postgres redis nexus-api nexus-frontend
+docker compose up -d postgres redis las-api las-frontend
 ```

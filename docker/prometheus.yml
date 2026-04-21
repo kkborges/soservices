@@ -2,7 +2,7 @@ global:
   scrape_interval: 15s
 
 scrape_configs:
-  - job_name: nexus-api
+  - job_name: las-api
     metrics_path: /metrics
     static_configs:
-      - targets: ["nexus-api:8000"]
+      - targets: ["las-api:8000"]

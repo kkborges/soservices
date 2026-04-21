@@ -1,5 +1,5 @@
 """
-Self-Healing Capabilities for Nexus Platform
+Self-Healing Capabilities for LAS Platform
 
 Provides:
 - Automatic failure detection and recovery

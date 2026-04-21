@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['Z:\\Projetos\\nexus\\installer\\windows\\las_setup_bootstrap.py'],
+    ['installer\\windows\\las_setup_bootstrap.py'],
     pathex=[],
     binaries=[],
     datas=[('installer/windows/bin/nssm.exe', '.')],

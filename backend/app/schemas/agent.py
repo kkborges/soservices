@@ -11,7 +11,9 @@ class CreateAgentSchema(BaseModel):
     """Schema for creating a new agent"""
     name: str = Field(..., min_length=1, max_length=255, description="Agent name")
     description: Optional[str] = Field(None, description="Agent description")
-    agent_type: str = Field(..., description="Agent type (linux, windows, kubernetes, etc)")
+    agent_type: str = Field(default="linux", description="Agent type (linux, windows, kubernetes, etc)")
+    hostname: Optional[str] = Field(None, description="Agent hostname")
+    os_type: Optional[str] = Field(None, description="Operating system type")
     
     class Config:
         json_schema_extra = {
@@ -54,8 +56,9 @@ class AgentResponseSchema(BaseModel):
     """Schema for agent response"""
     id: str
     name: str
-    agent_type: str
+    agent_type: str = "agent"
     status: str
+    tenant_id: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

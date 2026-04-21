@@ -1,11 +1,12 @@
-version: '3.9'
+version: "3.9"
 
 # ============================================================
-# Nexus Platform v4.0 — Full Stack Docker Compose
+# LAS Plataforma de Monitoramento e Observabilidade
+# Full Stack (Docker Compose)
 # ============================================================
 
 networks:
-  nexus-net:
+  las-net:
     driver: bridge
     ipam:
       config:
@@ -14,22 +15,20 @@ networks:
 volumes:
   postgres_data:
   redis_data:
-  nexus_logs:
-  nexus_uploads:
+  las_logs:
+  las_uploads:
   prometheus_data:
   grafana_data:
 
 services:
-
-  # ─── PostgreSQL ─────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
-    container_name: nexus-postgres
+    container_name: las-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: nexus
-      POSTGRES_USER: nexus
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus_password_change_me}
+      POSTGRES_DB: las
+      POSTGRES_USER: las
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-las_password_change_me}
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF8"
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -37,17 +36,16 @@ services:
     ports:
       - "5432:5432"
     networks:
-      - nexus-net
+      - las-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nexus -d nexus"]
+      test: ["CMD-SHELL", "pg_isready -U las -d las"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ─── Redis (Celery Broker + Cache) ──────────────────────────
   redis:
     image: redis:7-alpine
-    container_name: nexus-redis
+    container_name: las-redis
     restart: unless-stopped
     command: redis-server --requirepass ${REDIS_PASSWORD:-redis_password} --maxmemory 512mb --maxmemory-policy allkeys-lru
     volumes:
@@ -55,31 +53,31 @@ services:
     ports:
       - "6379:6379"
     networks:
-      - nexus-net
+      - las-net
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_password}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ─── FastAPI Backend ─────────────────────────────────────────
-  nexus-api:
+  las-api:
     build:
       context: ../backend
       dockerfile: Dockerfile
-    container_name: nexus-api
+    container_name: las-api
     restart: unless-stopped
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      POSTGRES_DB: nexus
-      POSTGRES_USER: nexus
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus_password_change_me}
+      POSTGRES_DB: las
+      POSTGRES_USER: las
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-las_password_change_me}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_password}
       SECRET_KEY: ${SECRET_KEY:-change_me_to_a_64_char_random_string}
       PLATFORM_URL: ${PLATFORM_URL:-http://localhost:8000}
+      PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:-http://localhost}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -88,7 +86,7 @@ services:
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_FROM: ${SMTP_FROM:-nexus@yourdomain.com}
+      SMTP_FROM: ${SMTP_FROM:-las@yourdomain.com}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
@@ -99,12 +97,12 @@ services:
       GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
       DEBUG: ${DEBUG:-false}
     volumes:
-      - nexus_logs:/app/logs
-      - nexus_uploads:/app/uploads
+      - las_logs:/app/logs
+      - las_uploads:/app/uploads
     ports:
       - "8000:8000"
     networks:
-      - nexus-net
+      - las-net
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,23 +114,22 @@ services:
       timeout: 10s
       retries: 3
 
-  # ─── Celery Worker — General queue ──────────────────────────
   celery-worker:
     build:
       context: ../backend
       dockerfile: Dockerfile
-    container_name: nexus-celery-worker
+    container_name: las-celery-worker
     restart: unless-stopped
     command: celery -A app.workers.celery_app worker --queues=default,alerts,baseline --loglevel=info --concurrency=4
     environment: &celery-env
       POSTGRES_HOST: postgres
-      POSTGRES_USER: nexus
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus_password_change_me}
-      POSTGRES_DB: nexus
+      POSTGRES_USER: las
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-las_password_change_me}
+      POSTGRES_DB: las
       REDIS_HOST: redis
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_password}
       SECRET_KEY: ${SECRET_KEY:-change_me}
-      PLATFORM_URL: ${PLATFORM_URL:-http://nexus-api:8000}
+      PLATFORM_URL: ${PLATFORM_URL:-http://las-api:8000}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -147,109 +144,102 @@ services:
       AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
       GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
     volumes:
-      - nexus_logs:/app/logs
+      - las_logs:/app/logs
     networks:
-      - nexus-net
+      - las-net
     depends_on:
       - postgres
       - redis
 
-  # ─── Celery Worker — AI queue ────────────────────────────────
   celery-ai:
     build:
       context: ../backend
       dockerfile: Dockerfile
-    container_name: nexus-celery-ai
+    container_name: las-celery-ai
     restart: unless-stopped
     command: celery -A app.workers.celery_app worker --queues=ai,security --loglevel=info --concurrency=2
     environment: *celery-env
     networks:
-      - nexus-net
+      - las-net
     depends_on:
       - postgres
       - redis
 
-  # ─── Celery Worker — Synthetic & Collector ──────────────────
   celery-synthetic:
     build:
       context: ../backend
       dockerfile: Dockerfile
-    container_name: nexus-celery-synthetic
+    container_name: las-celery-synthetic
     restart: unless-stopped
     command: celery -A app.workers.celery_app worker --queues=synthetic,collector --loglevel=info --concurrency=10
     environment: *celery-env
     networks:
-      - nexus-net
+      - las-net
     depends_on:
       - postgres
       - redis
 
-  # ─── Celery Beat (Scheduler) ─────────────────────────────────
   celery-beat:
     build:
       context: ../backend
       dockerfile: Dockerfile
-    container_name: nexus-celery-beat
+    container_name: las-celery-beat
     restart: unless-stopped
     command: celery -A app.workers.celery_app beat --loglevel=info
     environment: *celery-env
     networks:
-      - nexus-net
+      - las-net
     depends_on:
       - postgres
       - redis
 
-  # ─── Flower (Celery Monitor UI) ──────────────────────────────
   flower:
     build:
       context: ../backend
       dockerfile: Dockerfile
-    container_name: nexus-flower
+    container_name: las-flower
     restart: unless-stopped
-    command: celery -A app.workers.celery_app flower --port=5555 --basic_auth=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-nexus123}
+    command: celery -A app.workers.celery_app flower --port=5555 --basic_auth=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-las123}
     environment: *celery-env
     ports:
       - "5555:5555"
     networks:
-      - nexus-net
+      - las-net
     depends_on:
       - redis
 
-  # ─── OTel Collector ──────────────────────────────────────────
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
-    container_name: nexus-otel-collector
+    container_name: las-otel-collector
     restart: unless-stopped
     volumes:
       - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
     command: ["--config=/etc/otel-collector-config.yaml"]
     ports:
-      - "4317:4317"   # GRPC
-      - "4318:4318"   # HTTP
-      - "8888:8888"   # Prometheus metrics
+      - "4317:4317"
+      - "4318:4318"
+      - "8888:8888"
     networks:
-      - nexus-net
+      - las-net
 
-  # ─── Frontend (Nginx serving React/SPA) ──────────────────────
-  nexus-frontend:
+  las-frontend:
     build:
       context: ../frontend
       dockerfile: Dockerfile
-    container_name: nexus-frontend
+    container_name: las-frontend
     restart: unless-stopped
     ports:
       - "80:80"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
-      - nexus-net
+      - las-net
     depends_on:
-      - nexus-api
+      - las-api
 
-  # ─── Prometheus ───────────────────────────────────────────────
   prometheus:
     image: prom/prometheus:latest
-    container_name: nexus-prometheus
+    container_name: las-prometheus
     restart: unless-stopped
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -257,14 +247,13 @@ services:
     ports:
       - "9090:9090"
     networks:
-      - nexus-net
+      - las-net
     profiles:
       - monitoring
 
-  # ─── Grafana ─────────────────────────────────────────────────
   grafana:
     image: grafana/grafana:latest
-    container_name: nexus-grafana
+    container_name: las-grafana
     restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
@@ -273,21 +262,21 @@ services:
     ports:
       - "3000:3000"
     networks:
-      - nexus-net
+      - las-net
     profiles:
       - monitoring
 
-  # ─── PgAdmin (optional, dev only) ────────────────────────────
   pgadmin:
     image: dpage/pgadmin4:latest
-    container_name: nexus-pgadmin
+    container_name: las-pgadmin
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@nexus.local
+      PGADMIN_DEFAULT_EMAIL: admin@las.local
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
     ports:
       - "5050:80"
     networks:
-      - nexus-net
+      - las-net
     profiles:
       - dev
+

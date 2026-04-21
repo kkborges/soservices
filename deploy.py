@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Deployment Script for Nexus Platform v2.0
-Deploys the application to /srv/Projetos/nexus-2.0 (Linux) or C:/Projetos/nexus-2.0 (Windows)
+Deployment Script for LAS Plataforma de Monitoramento e Observabilidade
+Deploys the application to /srv/las-platform (Linux) or C:/las-platform (Windows)
 """
 
 import os
@@ -18,13 +18,13 @@ IS_LINUX = sys.platform.startswith("linux")
 
 # Configuration - adjust paths based on OS
 if IS_WINDOWS:
-    DEPLOYMENT_PATH = Path("C:/Projetos/nexus-2.0")
-    BACKUP_PATH = Path("C:/Projetos/nexus-backups")
+    DEPLOYMENT_PATH = Path("C:/las-platform")
+    BACKUP_PATH = Path("C:/las-platform-backups")
 else:
-    DEPLOYMENT_PATH = Path("/srv/Projetos/nexus-2.0")
-    BACKUP_PATH = Path("/srv/Projetos/nexus-backups")
+    DEPLOYMENT_PATH = Path("/srv/las-platform")
+    BACKUP_PATH = Path("/srv/las-platform-backups")
 
-SOURCE_PATH = Path("z:/Projetos/nexus" if IS_WINDOWS else "/mnt/z/Projetos/nexus")
+SOURCE_PATH = Path(__file__).resolve().parent
 LOG_PATH = DEPLOYMENT_PATH / "logs"
 VENV_PATH = DEPLOYMENT_PATH / "venv"
 PIP_EXECUTABLE = str(VENV_PATH / "Scripts" / "pip.exe") if IS_WINDOWS else str(VENV_PATH / "bin" / "pip")
@@ -53,7 +53,7 @@ def backup_existing():
     log("Backing up existing deployment...")
     try:
         if (DEPLOYMENT_PATH / "backend").exists():
-            backup_name = f"nexus-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            backup_name = f"las-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
             backup_location = BACKUP_PATH / backup_name
             shutil.move(str(DEPLOYMENT_PATH / "backend"), str(backup_location / "backend"))
             log(f"Backup created at {backup_location}")
@@ -116,7 +116,7 @@ def setup_virtual_environment():
         
         # Upgrade pip
         result = subprocess.run(
-            [PIP_EXECUTABLE, "install", "--upgrade", "pip"],
+            [PYTHON_EXECUTABLE, "-m", "pip", "install", "--upgrade", "pip"],
             capture_output=True,
             text=True
         )
@@ -186,11 +186,11 @@ def create_env_file():
     """Create environment configuration file."""
     log("Creating environment configuration...")
     try:
-        env_content = """# Nexus Platform v2.0 Environment Configuration
+        env_content = """# LAS Platform Environment Configuration
 # ==========================================
 
 # Application Settings
-PROJECT_NAME=Nexus Platform
+PROJECT_NAME=LAS Plataforma de Monitoramento e Observabilidade
 DEBUG=false
 ENVIRONMENT=production
 
@@ -199,7 +199,7 @@ API_V1_STR=/api/v1
 BACKEND_CORS_ORIGINS=["*"]
 
 # Database Configuration
-DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/nexus
+DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/las
 DATABASE_ECHO=false
 
 # Redis Configuration
@@ -234,7 +234,7 @@ LOG_FORMAT=json
         env_file = DEPLOYMENT_PATH / "backend" / ".env"
         env_file.write_text(env_content)
         log(f"Environment file created at {env_file}")
-        log("⚠️  IMPORTANT: Update .env with production credentials before starting the application", "WARNING")
+        log("IMPORTANT: Update .env with production credentials before starting the application", "WARNING")
         
         return True
     except Exception as e:
@@ -250,12 +250,12 @@ def create_systemd_service():
     log("Creating systemd service file...")
     try:
         service_content = f"""[Unit]
-Description=Nexus Platform v2.0 API Service
+Description=LAS Platform API Service
 After=network.target postgresql.service redis-server.service
 
 [Service]
 Type=notify
-User=nexus
+User=las
 WorkingDirectory={DEPLOYMENT_PATH}/backend
 Environment="PATH={VENV_PATH}/bin"
 EnvironmentFile={DEPLOYMENT_PATH}/backend/.env
@@ -268,7 +268,7 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 """
-        service_file = Path("/etc/systemd/system/nexus-api.service")
+        service_file = Path("/etc/systemd/system/las-api.service")
         
         try:
             with open(service_file, 'w') as f:
@@ -280,14 +280,14 @@ WantedBy=multi-user.target
             log("Systemd daemon reloaded successfully")
             
             # Enable service to start on boot
-            run_command(["sudo", "systemctl", "enable", "nexus-api"], "Enable nexus-api service")
+            run_command(["sudo", "systemctl", "enable", "las-api"], "Enable las-api service")
             log("Service enabled for auto-start on boot")
             
             return True
         except PermissionError:
             log("WARNING: Run as sudo to install systemd service", "WARN")
             log(f"Systemd service content:\n{service_content}", "INFO")
-            log("Save this to /etc/systemd/system/nexus-api.service and run: sudo systemctl daemon-reload", "INFO")
+            log("Save this to /etc/systemd/system/las-api.service and run: sudo systemctl daemon-reload", "INFO")
             return True
             
     except Exception as e:
@@ -307,7 +307,7 @@ def create_deployment_summary():
         
         summary = f"""
 {border_top}
-NEXUS PLATFORM v2.0 - DEPLOYMENT SUMMARY
+LAS PLATFORM - DEPLOYMENT SUMMARY
 {border_bot}
 
 DEPLOYMENT INFORMATION
@@ -394,7 +394,7 @@ def display_deployment_info():
     
     info = f"""
 {border_top}
-NEXUS PLATFORM v2.0 - DEPLOYMENT CONFIGURATION
+LAS PLATFORM - DEPLOYMENT CONFIGURATION
 {border_bot}
 
 SYSTEM INFORMATION
@@ -436,7 +436,7 @@ Ready to proceed with deployment
 def main():
     """Execute deployment."""
     log("=" * 80)
-    log("NEXUS PLATFORM v2.0 - DEPLOYMENT SCRIPT")
+    log("LAS PLATFORM - DEPLOYMENT SCRIPT")
     log("=" * 80)
     
     # Display configuration info

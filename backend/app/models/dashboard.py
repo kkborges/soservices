@@ -4,7 +4,15 @@ from app.db.base import Base
 
 
 class Dashboard(Base):
+    """Custom or system dashboard composed of reusable observability widgets."""
+
     __tablename__ = "dashboards"
+
+    def __init__(self, **kwargs):
+        title = kwargs.pop("title", None)
+        super().__init__(**kwargs)
+        if title is not None and not self.name:
+            self.name = title
 
     tenant_id = Column(String(36), ForeignKey("tenants.id"), nullable=False, index=True)
     user_id = Column(String(36), ForeignKey("users.id"), nullable=True)   # NULL = shared
@@ -27,8 +35,19 @@ class Dashboard(Base):
 
     widgets = relationship("DashboardWidget", back_populates="dashboard", cascade="all, delete-orphan")
 
+    @property
+    def title(self) -> str:
+        """Compatibility alias for dashboard name."""
+        return self.name
+
+    @title.setter
+    def title(self, value: str) -> None:
+        self.name = value
+
 
 class DashboardWidget(Base):
+    """Dashboard visualization widget and its data-source configuration."""
+
     __tablename__ = "dashboard_widgets"
 
     dashboard_id = Column(String(36), ForeignKey("dashboards.id"), nullable=False, index=True)
@@ -49,7 +68,7 @@ class DashboardWidget(Base):
     grid_h = Column(Integer, default=4)
 
     # Data source config
-    datasource = Column(String(30), default="nexus")  # nexus|prometheus|loki|elasticsearch
+    datasource = Column(String(30), default="las")  # las|prometheus|loki|elasticsearch
     metric = Column(String(255))           # metric name or query
     query = Column(Text)                   # raw query / PromQL / SQL
     entity_type = Column(String(30))       # host|network_asset|service|k8s

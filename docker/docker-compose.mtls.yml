@@ -5,9 +5,9 @@ networks:
     external: true
 
 services:
-  nexus-mtls-edge:
+  las-mtls-edge:
     image: nginx:1.27-alpine
-    container_name: nexus-mtls-edge
+    container_name: las-mtls-edge
     restart: unless-stopped
     ports:
       - "8443:8443"

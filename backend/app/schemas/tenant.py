@@ -3,7 +3,7 @@ Tenant-related schemas for API validation
 """
 
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import re
 
 
@@ -13,14 +13,16 @@ class CreateTenantSchema(BaseModel):
     slug: str = Field(..., min_length=1, max_length=50, description="Tenant slug (URL-friendly identifier)")
     description: Optional[str] = Field(None, description="Tenant description")
     
-    def validate_slug(self):
+    @field_validator("slug")
+    @classmethod
+    def validate_slug(cls, slug: str) -> str:
         """Validate slug format: lowercase, alphanumeric, hyphens only"""
-        if not re.match(r'^[a-z0-9]([a-z0-9-]*[a-z0-9])?$', self.slug):
+        if not re.match(r'^[a-z0-9]([a-z0-9-]*[a-z0-9])?$', slug):
             raise ValueError(
                 "Slug must be lowercase, start/end with alphanumeric, "
                 "and contain only alphanumeric and hyphens"
             )
-        return self.slug
+        return slug
 
     class Config:
         json_schema_extra = {

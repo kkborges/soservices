@@ -3,15 +3,18 @@ from app.db.base import Base
 
 
 class Ticket(Base):
+    """Customer support ticket enriched with AI analysis and remediation workflow."""
+
     __tablename__ = "tickets"
 
     tenant_id = Column(String(36), ForeignKey("tenants.id"), nullable=False, index=True)
-    created_by = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    created_by = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
     assigned_to = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
 
     title = Column(String(255), nullable=False)
     category = Column(String(100), default="incident")
     severity = Column(String(20), default="medium")
+    priority = Column(Integer, default=3)
     status = Column(String(20), default="open")  # open|triaged|in_progress|waiting_customer|resolved|closed
     source = Column(String(30), default="portal")
 
@@ -33,6 +36,8 @@ class Ticket(Base):
 
 
 class TicketMessage(Base):
+    """Conversation entry, attachment reference or internal note attached to a ticket."""
+
     __tablename__ = "ticket_messages"
 
     ticket_id = Column(String(36), ForeignKey("tickets.id"), nullable=False, index=True)

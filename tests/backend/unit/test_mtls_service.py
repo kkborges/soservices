@@ -113,7 +113,7 @@ MIICljCCAX4CCQCKz0c8F8XG6jANBgkqhkiG9w0BAQsFADANMQswCQYDVQQGEwJC
     @pytest.mark.asyncio
     async def test_certificate_cn_extraction(self):
         """Extract Common Name from certificate subject"""
-        subject = "CN=agent-001.nexus.local,O=Nexus,C=BR"
+        subject = "CN=agent-001.las.local,O=LAS,C=BR"
         
         # Extract CN
         cn = None
@@ -122,25 +122,25 @@ MIICljCCAX4CCQCKz0c8F8XG6jANBgkqhkiG9w0BAQsFADANMQswCQYDVQQGEwJC
                 cn = part.strip().replace("CN=", "")
                 break
         
-        assert cn == "agent-001.nexus.local"
+        assert cn == "agent-001.las.local"
     
     @pytest.mark.asyncio
     async def test_certificate_san_extraction(self):
         """Extract Subject Alternative Names (SAN)"""
         sans = [
-            "agent-001.nexus.local",
+            "agent-001.las.local",
             "agent-001",
             "192.168.1.100"
         ]
         
         assert len(sans) > 0
-        assert "agent-001.nexus.local" in sans
+        assert "agent-001.las.local" in sans
     
     @pytest.mark.asyncio
     async def test_mtls_server_cert_validation(self):
         """Server certificate validation in mTLS"""
         server_cert = {
-            "cn": "gateway.nexus.local",
+            "cn": "gateway.las.local",
             "valid": True,
             "self_signed": False,
             "expires_in_days": 30

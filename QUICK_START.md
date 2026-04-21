@@ -1,4 +1,4 @@
-# Nexus Platform v2.0 - Quick Start Deployment
+# LAS Platform v2.0 - Quick Start Deployment
 
 ## 🚀 Quick Start (5 minutes)
 
@@ -14,8 +14,8 @@
 
 ```bash
 # Clone repository
-git clone https://github.com/your-org/nexus.git
-cd nexus
+git clone <URL_DO_REPOSITORIO_LAS>
+cd las-platform
 
 # Run deployment script
 python deploy.py
@@ -32,8 +32,8 @@ The script will:
 
 ```bash
 # 1. Create deployment directory
-mkdir -p /srv/Projetos/nexus-2.0
-cd /srv/Projetos/nexus-2.0
+mkdir -p /srv/las-platform
+cd /srv/las-platform
 
 # 2. Create Python virtual environment
 python -m venv venv
@@ -63,12 +63,12 @@ gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.main:app
 Once running, access the platform at:
 
 - **API** - http://localhost:8000
-- **Documentation** - http://localhost:8000/docs
-- **Health Check** - http://localhost:8000/health
+- **Documentation** - http://localhost:8000/api/docs (quando DEBUG=true)
+- **Health Check** - http://localhost:8000/api/health
 
 ### Production Deployment
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for complete production setup including:
+Veja a documentacao em `docs/` para deploy em producao, incluindo:
 - Nginx reverse proxy
 - SSL/TLS certificates
 - Systemd service configuration
@@ -133,7 +133,7 @@ ENVIRONMENT=production
 DEBUG=false
 
 # Database
-DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/nexus
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/las
 
 # Redis (optional)
 REDIS_URL=redis://localhost:6379/0
@@ -181,13 +181,13 @@ curl http://localhost:8000/health/cache
 
 ```bash
 # Application logs
-tail -f /srv/Projetos/nexus-2.0/logs/app.log
+tail -f /srv/Projetos/las-platform/logs/app.log
 
 # Systemd logs
-sudo journalctl -u nexus-api -f
+sudo journalctl -u las-api -f
 
 # Error logs
-grep ERROR /srv/Projetos/nexus-2.0/logs/*.log
+grep ERROR /srv/Projetos/las-platform/logs/*.log
 ```
 
 ## 🆘 Troubleshooting
@@ -195,7 +195,7 @@ grep ERROR /srv/Projetos/nexus-2.0/logs/*.log
 **API not responding?**
 - Check logs: `tail -f logs/app.log`
 - Verify port 8000 is available: `lsof -i :8000`
-- Check database connection: `psql -U user -d nexus`
+- Check database connection: `psql -U user -d las`
 
 **Database connection error?**
 - Verify PostgreSQL is running: `sudo systemctl status postgresql`

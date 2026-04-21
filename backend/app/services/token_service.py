@@ -76,7 +76,7 @@ def _gateway_features(gateway_config: Optional[dict]) -> dict[str, bool]:
 
 
 def _generate_token(prefix: str, length: int = 48) -> str:
-    """Generate a secure token with prefix: nxa_<random> or nxg_<random>"""
+    """Generate a secure token with prefix: lsa_<random> or lsg_<random>"""
     alphabet = string.ascii_letters + string.digits
     random_part = "".join(secrets.choice(alphabet) for _ in range(length))
     return f"{prefix}_{random_part}"
@@ -253,7 +253,7 @@ def build_linux_install_script(
     modules_str = ",".join(modules or ["infra", "logs", "otel"])
     return f"""#!/bin/bash
 # ============================================================
-# Nexus Platform Agent Installer v4.0
+# LAS Platform Agent Installer v4.0
 # Auto-generated — token embedded, no manual configuration needed
 # ============================================================
 
@@ -285,7 +285,7 @@ echo "  ██║╚██╗██║██╔══╝   ██╔██╗ �
 echo "  ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║"
 echo "  ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝"
 echo -e "${{NC}}"
-echo -e "${{GREEN}}Nexus Platform v4.0 — Instalação do Agente${{NC}}"
+echo -e "${{GREEN}}LAS Platform v4.0 — Instalação do Agente${{NC}}"
 echo ""
 
 # Check root
@@ -439,7 +439,7 @@ verify_connection
 
 echo ""
 echo -e "${{GREEN}}============================================${{NC}}"
-echo -e "${{GREEN}}✅ Nexus Agent instalado com sucesso!${{NC}}"
+echo -e "${{GREEN}}✅ LAS Agent instalado com sucesso!${{NC}}"
 echo -e "${{GREEN}}============================================${{NC}}"
 echo ""
 echo "  Token: ${{YELLOW}}{token}${{NC}}"
@@ -584,7 +584,7 @@ services:
       echo "[LAS Agent] Iniciando coleta real de infra/logs/processos..."
       exec python /opt/las/las-agent.py'
     labels:
-      - "com.nexus.managed=true"
+      - "com.las.managed=true"
 volumes:
   las-agent-data:
   las-agent-config:

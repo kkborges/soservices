@@ -1911,7 +1911,7 @@ async def create_log_monitor(
         dashboard_id=dashboard.id,
         title=payload.name,
         viz_type=payload.viz_type,
-        datasource="nexus",
+        datasource="las",
         metric=f"log_query.{payload.name.lower().replace(' ', '_')[:80]}",
         query=payload.query,
         entity_type="log",
@@ -2080,7 +2080,7 @@ async def get_dashboard_detail(
         return {
             **blueprint,
             "widgets": [
-                {**widget, "id": f"{dashboard_id}:{index}", "datasource": "nexus", "options": {}}
+                {**widget, "id": f"{dashboard_id}:{index}", "datasource": "las", "options": {}}
                 for index, widget in enumerate(blueprint["widgets"], start=1)
             ],
         }
@@ -2135,7 +2135,7 @@ async def create_dashboard_widget(
         dashboard_id=dashboard.id,
         title=payload.title,
         viz_type=payload.viz_type,
-        datasource="nexus",
+        datasource="las",
         metric=payload.metric,
         query=payload.query,
         entity_type=payload.entity_type,

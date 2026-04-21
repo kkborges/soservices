@@ -1,4 +1,4 @@
-# 🧪 Testing Guide - Nexus Platform
+﻿# ðŸ§ª Testing Guide - LAS Platform
 
 **Status**: Ready for implementation  
 **Date**: April 2026  
@@ -6,7 +6,7 @@
 
 ---
 
-## 📋 Quick Start
+## ðŸ“‹ Quick Start
 
 ```bash
 # 1. Install dependencies
@@ -29,33 +29,33 @@ pytest tests/backend -n auto
 
 ---
 
-## 🏗️ Test Structure
+## ðŸ—ï¸ Test Structure
 
 ```
 tests/backend/
-├── conftest.py                 # Shared fixtures & configuration
-├── unit/
-│   ├── test_auth_service.py   # Auth logic tests
-│   ├── test_schemas.py        # Pydantic validation tests
-│   └── test_*.py              # Other service tests
-├── integration/
-│   ├── test_main_endpoints.py # Main API endpoints
-│   ├── test_auth_endpoints.py # Auth flow tests
-│   └── test_*.py              # DB, cache integration
-├── e2e/
-│   ├── test_user_flow.py      # Complete user journey
-│   └── test_agent_registration.py # Agent bootstrap flow
-├── fixtures/
-│   ├── db.py                  # Database fixtures
-│   └── models.py              # Pre-built model instances
-└── mocks/
-    ├── cloud_providers.py     # AWS/Azure/GCP mocks
-    └── external_apis.py       # OpenAI, Anthropic mocks
+â”œâ”€â”€ conftest.py                 # Shared fixtures & configuration
+â”œâ”€â”€ unit/
+â”‚   â”œâ”€â”€ test_auth_service.py   # Auth logic tests
+â”‚   â”œâ”€â”€ test_schemas.py        # Pydantic validation tests
+â”‚   â””â”€â”€ test_*.py              # Other service tests
+â”œâ”€â”€ integration/
+â”‚   â”œâ”€â”€ test_main_endpoints.py # Main API endpoints
+â”‚   â”œâ”€â”€ test_auth_endpoints.py # Auth flow tests
+â”‚   â””â”€â”€ test_*.py              # DB, cache integration
+â”œâ”€â”€ e2e/
+â”‚   â”œâ”€â”€ test_user_flow.py      # Complete user journey
+â”‚   â””â”€â”€ test_agent_registration.py # Agent bootstrap flow
+â”œâ”€â”€ fixtures/
+â”‚   â”œâ”€â”€ db.py                  # Database fixtures
+â”‚   â””â”€â”€ models.py              # Pre-built model instances
+â””â”€â”€ mocks/
+    â”œâ”€â”€ cloud_providers.py     # AWS/Azure/GCP mocks
+    â””â”€â”€ external_apis.py       # OpenAI, Anthropic mocks
 ```
 
 ---
 
-## 🧩 Test Categories
+## ðŸ§© Test Categories
 
 ### 1. **Unit Tests** (`tests/backend/unit/`)
 - No external dependencies
@@ -99,12 +99,12 @@ pytest tests/backend/e2e -v -m e2e
 ```
 
 **Examples:**
-- User registration → Login → Create agent
-- Agent bootstrap → Send data → View in dashboard
+- User registration â†’ Login â†’ Create agent
+- Agent bootstrap â†’ Send data â†’ View in dashboard
 
 ---
 
-## 📚 Available Fixtures
+## ðŸ“š Available Fixtures
 
 ### Database
 ```python
@@ -175,7 +175,7 @@ def sample_alert_data():
 
 ---
 
-## 🔍 Running Tests
+## ðŸ” Running Tests
 
 ### Run Everything
 ```bash
@@ -221,7 +221,7 @@ pytest tests/backend -v --durations=10
 
 ---
 
-## ✍️ Writing Tests
+## âœï¸ Writing Tests
 
 ### Unit Test Example
 ```python
@@ -277,7 +277,7 @@ def test_create_user(db_session_sync, sample_user_data):
 
 ---
 
-## 🔧 Pre-commit Hooks (Optional)
+## ðŸ”§ Pre-commit Hooks (Optional)
 
 ```bash
 # Install pre-commit
@@ -311,7 +311,7 @@ repos:
 
 ---
 
-## 📊 Coverage Report
+## ðŸ“Š Coverage Report
 
 After running:
 ```bash
@@ -331,7 +331,7 @@ Open `coverage_html/index.html` in browser to see:
 
 ---
 
-## 🚀 CI/CD Integration
+## ðŸš€ CI/CD Integration
 
 GitHub Actions runs tests automatically on:
 - Push to main/develop
@@ -339,11 +339,11 @@ GitHub Actions runs tests automatically on:
 
 See `.github/workflows/ci-cd.yml` for configuration.
 
-**Status**: ✅ Tests must pass before merge
+**Status**: âœ… Tests must pass before merge
 
 ---
 
-## 🐛 Debugging Failed Tests
+## ðŸ› Debugging Failed Tests
 
 ### 1. Run with verbose output
 ```bash
@@ -368,19 +368,19 @@ pip install ipdb
 
 ---
 
-## 📈 Coverage by Module
+## ðŸ“ˆ Coverage by Module
 
 | Module | Current | Target | Status |
 |--------|---------|--------|--------|
-| auth_service | 0% | 95% | 🔴 |
-| agent_service | 0% | 85% | 🔴 |
-| gateway_routing | 0% | 80% | 🔴 |
-| models | 0% | 80% | 🔴 |
-| schemas | 0% | 75% | 🔴 |
+| auth_service | 0% | 95% | ðŸ”´ |
+| agent_service | 0% | 85% | ðŸ”´ |
+| gateway_routing | 0% | 80% | ðŸ”´ |
+| models | 0% | 80% | ðŸ”´ |
+| schemas | 0% | 75% | ðŸ”´ |
 
 ---
 
-## ✅ Checklist for New Tests
+## âœ… Checklist for New Tests
 
 Before committing:
 - [ ] Tests have clear names (describe what they test)
@@ -395,7 +395,7 @@ Before committing:
 
 ---
 
-## 🔗 Related Documents
+## ðŸ”— Related Documents
 
 - [CONTRIBUTING.md](../CONTRIBUTING.md) - Code contribution guidelines
 - [ARCHITECTURE.md](../docs/ARCHITECTURE.md) - System architecture
@@ -404,11 +404,12 @@ Before committing:
 
 ---
 
-## 📞 Support
+## ðŸ“ž Support
 
 Questions about tests?
 1. Check existing test examples
 2. Review pytest documentation
 3. Ask in code review
 
-**Happy testing! 🚀**
+**Happy testing! ðŸš€**
+

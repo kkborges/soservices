@@ -55,8 +55,8 @@ Esse seed nao inclui hosts, logs, traces ou metricas de exemplo.
 
 ## Alta disponibilidade
 
-- o frontend web deve apontar para `nexus-frontend-ha`, que entrega a SPA e encaminha chamadas `/api` quando necessario
-- a API publica deve apontar para `nexus-api-ha`, uma borda interna dedicada que balanceia `nexus-api-a` e `nexus-api-b`
+- o frontend web deve apontar para `las-frontend-ha`, que entrega a SPA e encaminha chamadas `/api` quando necessario
+- a API publica deve apontar para `las-api-ha`, uma borda interna dedicada que balanceia `las-api-a` e `las-api-b`
 - o compose base de HA esta em `docker/docker-compose.ha.yml`
 - o balanceador interno da API esta em `docker/nginx-api-ha.conf`
 - a topologia de gateways por tenant e clusters esta detalhada em `docs/TOPOLOGIA-E-HA.md`

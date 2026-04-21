@@ -1,0 +1,55 @@
+# ============================================================
+# LAS Plataforma de Monitoramento e Observabilidade
+# Repo hygiene (do not commit generated files / secrets)
+# ============================================================
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+coverage_html/
+.venv/
+venv/
+
+# Env / secrets
+.env
+.env.*
+*.pem
+*.key
+*.crt
+cookies.txt
+otel-instrumentation/las-config.env
+
+# Build outputs
+build/
+backend/build/
+dist/*.toc
+dist/*.log
+dist/*.pkg
+
+# .NET
+**/bin/
+**/obj/
+*.sln
+
+# Misc temp
+tmp-*
+*.tmp
+*.bak

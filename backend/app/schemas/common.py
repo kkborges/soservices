@@ -46,6 +46,7 @@ class ErrorResponse(BaseModel):
     """Schema for error responses"""
     detail: str = Field(..., description="Error message")
     error_code: Optional[str] = Field(None, description="Error code")
+    error_type: Optional[str] = Field(None, description="Error category")
     status_code: int = Field(..., description="HTTP status code")
 
     class Config:

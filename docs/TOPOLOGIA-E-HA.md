@@ -28,11 +28,11 @@ O calculo considera o `heartbeat_interval` informado pelo gateway. Na ausencia d
 
 Para a camada principal, o arquivo `docker/docker-compose.ha.yml` sobe:
 
-- `nexus-api-a`
-- `nexus-api-b`
+- `las-api-a`
+- `las-api-b`
 - `postgres`
 - `redis`
-- `nexus-frontend`
+- `las-frontend`
 
 O arquivo `docker/nginx-ha.conf` aplica:
 

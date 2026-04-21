@@ -1,7 +1,7 @@
 {
-  "name": "nexus-platform",
+  "name": "las-platform",
   "version": "3.0.0",
-  "description": "Portable static frontend shell for Nexus Platform",
+  "description": "Portable static frontend shell for LAS Platform",
   "scripts": {
     "build": "echo Static frontend ready",
     "serve": "npx http-server public -p 3000"

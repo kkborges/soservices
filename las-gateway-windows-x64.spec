@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['agents\\shared\\nexus_gateway.py'],
+    ['agents\\shared\\las_gateway.py'],
     pathex=[],
     binaries=[],
     datas=[],

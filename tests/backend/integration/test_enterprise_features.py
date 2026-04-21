@@ -328,7 +328,7 @@ class TestStructuredLoggingService:
     @pytest.fixture
     def logging_service(self):
         return StructuredLoggingService(
-            service_name="nexus",
+            service_name="las",
             service_version="2.0",
             environment="test"
         )
@@ -382,7 +382,7 @@ class TestDistributedTracingService:
     @pytest.fixture
     def tracing_service(self):
         return DistributedTracingService(
-            service_name="nexus",
+            service_name="las",
             service_version="2.0",
             environment="test"
         )
@@ -830,8 +830,8 @@ class TestEnterpriseIntegration:
         # Setup services
         rbac = GranularRBACService()
         audit = AuditLoggingService()
-        logging = StructuredLoggingService("nexus", "2.0", "test")
-        tracing = DistributedTracingService("nexus", "2.0", "test")
+        logging = StructuredLoggingService("las", "2.0", "test")
+        tracing = DistributedTracingService("las", "2.0", "test")
         alerting = IntelligentAlertingService()
         
         # Create role

@@ -7,7 +7,7 @@
 
 ## 🎯 Welcome Contributors!
 
-We're building the Nexus platform - a comprehensive observability and monitoring solution. We welcome contributions from developers who want to help make enterprise infrastructure monitoring better.
+We're building the LAS platform - a comprehensive observability and monitoring solution. We welcome contributions from developers who want to help make enterprise infrastructure monitoring better.
 
 ---
 
@@ -23,8 +23,8 @@ We're building the Nexus platform - a comprehensive observability and monitoring
 
 ```bash
 # Clone repository
-git clone https://github.com/soservices/nexus.git
-cd nexus
+git clone <URL_DO_REPOSITORIO_LAS>
+cd las-platform
 
 # Setup backend dev environment
 cd backend
@@ -178,8 +178,8 @@ def verify_token(token: str, algorithms: list[str]) -> dict[str, Any]:
 ### Branch Naming Convention
 
 ```
-feature/NEXUS-123-add-user-authentication  # New feature
-bugfix/NEXUS-456-fix-agent-crash           # Bug fix
+feature/LAS-123-add-user-authentication  # New feature
+bugfix/LAS-456-fix-agent-crash           # Bug fix
 docs/update-deployment-guide               # Documentation
 test/increase-auth-coverage                # Tests
 chore/upgrade-dependencies                 # Maintenance
@@ -309,7 +309,7 @@ class TestUserCreation:
 ### 1. Create Feature Branch
 
 ```bash
-git checkout -b feature/NEXUS-789-new-feature
+git checkout -b feature/LAS-789-new-feature
 ```
 
 ### 2. Make Changes
@@ -334,7 +334,7 @@ git commit -m "feat(services): add new feature implementation
 ### 4. Push to GitHub
 
 ```bash
-git push origin feature/NEXUS-789-new-feature
+git push origin feature/LAS-789-new-feature
 ```
 
 ### 5. Create Pull Request
@@ -601,4 +601,4 @@ All contributions are made under the MIT License.
 
 ---
 
-**Thanks for contributing to Nexus! 🚀**
+**Thanks for contributing to LAS! 🚀**

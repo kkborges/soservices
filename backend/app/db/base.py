@@ -83,6 +83,8 @@ async def ensure_schema_migrations(conn):
         "ALTER TABLE IF EXISTS rum_sessions ADD COLUMN IF NOT EXISTS requests_total INTEGER DEFAULT 0",
         "ALTER TABLE IF EXISTS rum_sessions ADD COLUMN IF NOT EXISTS actions_total INTEGER DEFAULT 0",
         "ALTER TABLE IF EXISTS rum_sessions ADD COLUMN IF NOT EXISTS errors_total INTEGER DEFAULT 0",
+        "ALTER TABLE IF EXISTS tickets ADD COLUMN IF NOT EXISTS priority INTEGER DEFAULT 3",
+        "ALTER TABLE IF EXISTS tickets ALTER COLUMN created_by DROP NOT NULL",
         """
         DO $$
         BEGIN

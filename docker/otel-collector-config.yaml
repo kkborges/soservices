@@ -19,15 +19,15 @@ processors:
     actions:
       - action: insert
         key: collector.name
-        value: nexus-otel-collector
+        value: las-otel-collector
 
 exporters:
-  otlphttp/nexus_traces:
-    endpoint: http://nexus-api:8000/api/v1/ingest/otel/traces
+  otlphttp/las_traces:
+    endpoint: http://las-api:8000/api/v1/ingest/otel/traces
     headers:
       content-type: application/json
-  otlphttp/nexus_metrics:
-    endpoint: http://nexus-api:8000/api/v1/ingest/otel/metrics
+  otlphttp/las_metrics:
+    endpoint: http://las-api:8000/api/v1/ingest/otel/metrics
     headers:
       content-type: application/json
   logging:
@@ -38,8 +38,8 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlphttp/nexus_traces, logging]
+      exporters: [otlphttp/las_traces, logging]
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlphttp/nexus_metrics]
+      exporters: [otlphttp/las_metrics]

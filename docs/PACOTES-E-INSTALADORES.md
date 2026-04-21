@@ -33,7 +33,7 @@ Os instaladores Linux sao scripts auto-suficientes (com extensao `.sh` ou `.bin`
 
 - pre-checks (minimo de disco e conectividade com a plataforma)
 - bootstrap de certificados mTLS
-- escrita de configuracao (compatibilidade com `[las]` e `[nexus]`)
+- escrita de configuracao (secao `[las]` como padrao; leitura de configuracoes legadas quando existir)
 - download do payload (preferindo gateway do tenant quando existir, com fallback para o SaaS)
 - instalacao como service (`systemd`) e inicializacao
 - autoupdate periodico (consulta mTLS e troca segura do payload)
@@ -66,4 +66,3 @@ Arquivos e servicos padrao:
 - Agentes e gateways consultam a plataforma periodicamente pela rota mTLS `/api/v1/agents/updates/check`.
 - A plataforma responde a versao mais recente, artefato correto por sistema operacional e `SHA256` esperado.
 - O componente baixa o novo payload somente quando houver versao diferente, valida o hash, troca o arquivo local e reinicia o processo/servico.
-

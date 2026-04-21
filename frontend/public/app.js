@@ -1285,33 +1285,61 @@ function integrationCorrelation(category) {
   return "hosts, servicos, aplicacoes e processos quando houver identificadores comuns";
 }
 
-function renderOnboarding() {
+async function renderOnboarding() {
   const webUrl = "https://las.soservices.com.br";
   const apiUrl = "https://api.soservices.com.br";
   const mtlsUrl = "https://api.soservices.com.br:8443";
+  const options = await api("/api/v1/agents/install-options");
+  const profileOptions = (options.agent_profiles || []).map((profile) => `<option value="${esc(profile.key)}" ${profile.allowed ? "" : "disabled"}>${esc(profile.label)}${profile.allowed ? "" : " (nao licenciado)"}</option>`).join("");
+  const moduleOptions = (options.agent_modules || []).map((module) => {
+    const alwaysOn = module.key === "logs";
+    return `<label class="pill-check"><input type="checkbox" class="agent-module-option" value="${esc(module.key)}" ${alwaysOn ? "checked disabled" : ""} ${module.allowed ? "" : "disabled"}> ${esc(module.label)}${module.allowed ? "" : " (licenca necessaria)"}</label>`;
+  }).join("");
+  const gatewayOptions = (options.gateway_types || []).map((gateway) => `<option value="${esc(gateway.key)}" ${gateway.allowed ? "" : "disabled"}>${esc(gateway.label)}${gateway.allowed ? "" : " (nao licenciado)"}</option>`).join("");
   render(`
     <section class="grid two">
       <article class="card">
         <h3>Instalacao real de agentes</h3>
-        <p class="muted">Use estes links dentro do tenant atual. Cada download emite um token novo vinculado ao tenant autenticado.</p>
+        <p class="muted">Escolha o perfil de instalacao. Logs sempre ficam inclusos; OTel, traces, RUM, IDS e scans aparecem conforme as licencas do tenant.</p>
+        <form id="agent-install-form" class="form-grid">
+          <label>Perfil
+            <select name="profile">${profileOptions}</select>
+          </label>
+          <label style="grid-column:1/-1">Modulos opcionais
+            <div class="pill-row">${moduleOptions}</div>
+          </label>
+        </form>
         <div class="actions">
-          <a class="button primary" href="/api/v1/agents/download/linux" target="_blank" rel="noreferrer">Agente Linux (.sh)</a>
-          <a class="button ghost" href="/api/v1/agents/download/windows" target="_blank" rel="noreferrer">Agente Windows Setup.exe</a>
-          <a class="button ghost" href="/api/v1/agents/download/windows?format=ps1" target="_blank" rel="noreferrer">Agente Windows PowerShell</a>
+          <a id="download-agent-linux" class="button primary" href="/api/v1/agents/download/linux" target="_blank" rel="noreferrer">Agente Linux (.sh)</a>
+          <a id="download-agent-windows" class="button ghost" href="/api/v1/agents/download/windows" target="_blank" rel="noreferrer">Agente Windows Setup.exe</a>
+          <a id="download-agent-windows-ps1" class="button ghost" href="/api/v1/agents/download/windows?format=ps1" target="_blank" rel="noreferrer">Agente Windows PowerShell</a>
+          <a id="download-agent-docker" class="button ghost" href="/api/v1/agents/download/docker" target="_blank" rel="noreferrer">Docker Compose</a>
+          <a id="download-agent-k8s" class="button ghost" href="/api/v1/agents/download/k8s" target="_blank" rel="noreferrer">Kubernetes DaemonSet</a>
         </div>
+        <p class="muted">O perfil Infra instala infraestrutura, processos, servicos e logs. O perfil Completa acrescenta OTel, traces e experiencia do usuario quando licenciados.</p>
         <p><strong>Servidor SaaS:</strong> <span class="mono">${apiUrl}</span></p>
         <p><strong>mTLS obrigatorio:</strong> <span class="mono">${mtlsUrl}</span></p>
         <p><strong>Frontend:</strong> <span class="mono">${webUrl}</span></p>
       </article>
       <article class="card">
         <h3>Gateways e failover</h3>
-        <p class="muted">Instale ao menos dois gateways primarios e um de failover quando o cliente tiver rede local ou segmentacao.</p>
+        <p class="muted">Selecione o tipo do gateway. Agents recebe trafego de agentes/OTel/RUM; Logs recebe syslog/log forwarding; Integracoes roda plugins; Seguranca executa tarefas de rede e security.</p>
+        <form id="gateway-install-form" class="form-grid">
+          <label>Tipo de gateway
+            <select name="gateway_type">${gatewayOptions}</select>
+          </label>
+        </form>
         <div class="actions">
-          <a class="button primary" href="/api/v1/agents/download/gateway/linux" target="_blank" rel="noreferrer">Gateway Linux (.sh)</a>
-          <a class="button ghost" href="/api/v1/agents/download/gateway/windows" target="_blank" rel="noreferrer">Gateway Windows Setup.exe</a>
-          <a class="button ghost" href="/api/v1/agents/download/gateway/windows?format=ps1" target="_blank" rel="noreferrer">Gateway Windows PowerShell</a>
+          <a id="download-gateway-linux" class="button primary" href="/api/v1/agents/download/gateway/linux" target="_blank" rel="noreferrer">Gateway Linux (.sh)</a>
+          <a id="download-gateway-windows" class="button ghost" href="/api/v1/agents/download/gateway/windows" target="_blank" rel="noreferrer">Gateway Windows Setup.exe</a>
+          <a id="download-gateway-windows-ps1" class="button ghost" href="/api/v1/agents/download/gateway/windows?format=ps1" target="_blank" rel="noreferrer">Gateway Windows PowerShell</a>
         </div>
         <p class="muted">Depois de instalar, acompanhe a tela Gateways para validar heartbeat, prioridade, peso, cluster e failover.</p>
+      </article>
+      <article class="card">
+        <h3>Experiencia do usuario</h3>
+        <p class="muted">No modo Completa, o agente podera preparar injecao assistida em webservers/app servers detectados. A opcao manual continua disponivel para apps onde a injecao automatica nao for segura.</p>
+        <pre><code>&lt;script src="/api/v1/agents/download/rum-js?appname=minha-app"&gt;&lt;/script&gt;</code></pre>
       </article>
       <article class="card">
         <h3>Apps de validacao</h3>
@@ -1331,6 +1359,37 @@ docker compose up -d --build</code></pre>
       </article>
     </section>
   `);
+  const updateAgentLinks = () => {
+    const form = $("#agent-install-form");
+    const profile = form.profile.value || "infra";
+    const modules = $$(".agent-module-option")
+      .filter((input) => input.checked && !input.disabled)
+      .map((input) => input.value);
+    const params = new URLSearchParams({ profile });
+    if (modules.length) {
+      params.set("modules", modules.join(","));
+    }
+    $("#download-agent-linux").href = `/api/v1/agents/download/linux?${params.toString()}`;
+    $("#download-agent-windows").href = `/api/v1/agents/download/windows?${params.toString()}`;
+    const ps1Params = new URLSearchParams(params);
+    ps1Params.set("format", "ps1");
+    $("#download-agent-windows-ps1").href = `/api/v1/agents/download/windows?${ps1Params.toString()}`;
+    $("#download-agent-docker").href = `/api/v1/agents/download/docker?${params.toString()}`;
+    $("#download-agent-k8s").href = `/api/v1/agents/download/k8s?${params.toString()}`;
+  };
+  const updateGatewayLinks = () => {
+    const type = $("#gateway-install-form").gateway_type.value || "agents";
+    const params = new URLSearchParams({ gateway_type: type });
+    $("#download-gateway-linux").href = `/api/v1/agents/download/gateway/linux?${params.toString()}`;
+    $("#download-gateway-windows").href = `/api/v1/agents/download/gateway/windows?${params.toString()}`;
+    const ps1Params = new URLSearchParams(params);
+    ps1Params.set("format", "ps1");
+    $("#download-gateway-windows-ps1").href = `/api/v1/agents/download/gateway/windows?${ps1Params.toString()}`;
+  };
+  $("#agent-install-form").addEventListener("change", updateAgentLinks);
+  $("#gateway-install-form").addEventListener("change", updateGatewayLinks);
+  updateAgentLinks();
+  updateGatewayLinks();
 }
 
 async function loadView(view) {
@@ -1402,7 +1461,7 @@ async function loadView(view) {
       return;
     }
     if (view === "onboarding") {
-      renderOnboarding();
+      await renderOnboarding();
       return;
     }
     if (view === "network") {
@@ -1428,12 +1487,12 @@ async function loadView(view) {
     if (view === "gateways") {
       const items = await api("/api/v1/gateways");
       const topology = await api("/api/v1/gateways/topology");
-      render(`<section class="grid two"><article class="card"><h3>Gateways</h3>${items.length ? table(["Nome", "Cluster", "Prioridade", "Peso", "Escopo", "Status", "Endpoint", "Heartbeat"], items.map((gateway) => [`<button class="link-button gateway-edit" data-gateway-id="${esc(gateway.id)}" type="button">${esc(gateway.name)}</button><br><small>${esc(gateway.type)}</small>`, esc(gateway.cluster_name || "default"), num(gateway.priority), num(gateway.weight), gateway.shared_with_tenants ? "compartilhado" : gateway.failover_only ? "failover" : "tenant", status(gateway.status), esc(gateway.public_endpoint || (gateway.host ? `${gateway.host}:${gateway.port}` : "-")), fmt(gateway.last_heartbeat)])) : `<p class="muted">Nenhum gateway criado.</p>`}<p class="muted">A ordenacao dos agentes usa prioridade, depois peso para balanceamento e, por fim, failover.</p>${topology.clusters.length ? topology.clusters.map((cluster) => `<div class="card" style="margin-top:12px"><strong>${esc(cluster.cluster_name)}</strong><p class="muted">Primarios: ${num(cluster.primary.length)} | Failover: ${num(cluster.failover.length)} | Compartilhados: ${num(cluster.shared.length)}</p></div>`).join("") : ""}</article><article class="card"><h3>Gateway e cluster</h3><form id="gateway-form" class="form-grid"><input type="hidden" name="gateway_id"><label>Nome<input name="name" required></label><label>Tipo<select name="type"><option value="infra">infra</option><option value="logs">logs</option><option value="otel">otel</option><option value="security">security</option><option value="proxy">proxy</option></select></label><label>Host<input name="host" placeholder="gw01.soservices.com.br"></label><label>Porta<input name="port" value="9443" type="number"></label><label>Cluster<input name="cluster_name" value="default"></label><label>Prioridade<input name="priority" value="100" type="number"></label><label>Peso<input name="weight" value="1" type="number"></label><label>Public endpoint<input name="public_endpoint" placeholder="https://gw01.soservices.com.br:9443"></label><label><input type="checkbox" name="failover_only" style="width:auto; margin-right:8px">Somente failover</label><label><input type="checkbox" name="shared_with_tenants" style="width:auto; margin-right:8px">Compartilhar com tenants</label><label><input type="checkbox" name="tls_enabled" checked style="width:auto; margin-right:8px">TLS habilitado</label><label><input type="checkbox" name="compress_enabled" checked style="width:auto; margin-right:8px">Compressao habilitada</label><label><input type="checkbox" name="encrypt_enabled" checked style="width:auto; margin-right:8px">Protecao dos dados habilitada</label></form><div class="actions" style="margin-top:14px"><button id="create-gateway" class="button primary" type="button">Salvar gateway</button><button id="delete-gateway" class="button ghost" type="button">Excluir</button><button id="cleanup-gateways" class="button ghost" type="button">Limpar testes</button><button id="reset-gateway" class="button ghost" type="button">Novo</button><a class="button ghost" href="/api/v1/agents/download/gateway/linux" target="_blank" rel="noreferrer">Gateway Linux</a><a class="button ghost" href="/api/v1/agents/download/gateway/windows" target="_blank" rel="noreferrer">Gateway Windows Setup</a><a class="button ghost" href="/api/v1/agents/download/gateway/windows?format=ps1" target="_blank" rel="noreferrer">Gateway Windows Script</a></div><p id="gateway-message" class="message"></p></article></section>`);
+      render(`<section class="grid two"><article class="card"><h3>Gateways</h3>${items.length ? table(["Nome", "Cluster", "Prioridade", "Peso", "Escopo", "Status", "Endpoint", "Heartbeat"], items.map((gateway) => [`<button class="link-button gateway-edit" data-gateway-id="${esc(gateway.id)}" type="button">${esc(gateway.name)}</button><br><small>${esc(gateway.type)}</small>`, esc(gateway.cluster_name || "default"), num(gateway.priority), num(gateway.weight), gateway.shared_with_tenants ? "compartilhado" : gateway.failover_only ? "failover" : "tenant", status(gateway.status), esc(gateway.public_endpoint || (gateway.host ? `${gateway.host}:${gateway.port}` : "-")), fmt(gateway.last_heartbeat)])) : `<p class="muted">Nenhum gateway criado.</p>`}<p class="muted">A ordenacao dos agentes usa prioridade, depois peso para balanceamento e, por fim, failover.</p>${topology.clusters.length ? topology.clusters.map((cluster) => `<div class="card" style="margin-top:12px"><strong>${esc(cluster.cluster_name)}</strong><p class="muted">Primarios: ${num(cluster.primary.length)} | Failover: ${num(cluster.failover.length)} | Compartilhados: ${num(cluster.shared.length)}</p></div>`).join("") : ""}</article><article class="card"><h3>Gateway e cluster</h3><form id="gateway-form" class="form-grid"><input type="hidden" name="gateway_id"><label>Nome<input name="name" required></label><label>Tipo<select name="type"><option value="agents">Gateway Agents</option><option value="integrations">Gateway Integracoes</option><option value="logs">Gateway de Logs</option><option value="security">Gateway de Seguranca</option></select></label><label>Host<input name="host" placeholder="gw01.soservices.com.br"></label><label>Porta<input name="port" value="9443" type="number"></label><label>Cluster<input name="cluster_name" value="default"></label><label>Prioridade<input name="priority" value="100" type="number"></label><label>Peso<input name="weight" value="1" type="number"></label><label>Public endpoint<input name="public_endpoint" placeholder="https://gw01.soservices.com.br:9443"></label><label><input type="checkbox" name="failover_only" style="width:auto; margin-right:8px">Somente failover</label><label><input type="checkbox" name="shared_with_tenants" style="width:auto; margin-right:8px">Compartilhar com tenants</label><label><input type="checkbox" name="tls_enabled" checked style="width:auto; margin-right:8px">TLS habilitado</label><label><input type="checkbox" name="compress_enabled" checked style="width:auto; margin-right:8px">Compressao habilitada</label><label><input type="checkbox" name="encrypt_enabled" checked style="width:auto; margin-right:8px">Protecao dos dados habilitada</label></form><div class="actions" style="margin-top:14px"><button id="create-gateway" class="button primary" type="button">Salvar gateway</button><button id="delete-gateway" class="button ghost" type="button">Excluir</button><button id="cleanup-gateways" class="button ghost" type="button">Limpar testes</button><button id="reset-gateway" class="button ghost" type="button">Novo</button><a class="button ghost" href="/api/v1/agents/download/gateway/linux?gateway_type=agents" target="_blank" rel="noreferrer">Gateway Linux</a><a class="button ghost" href="/api/v1/agents/download/gateway/windows?gateway_type=agents" target="_blank" rel="noreferrer">Gateway Windows Setup</a><a class="button ghost" href="/api/v1/agents/download/gateway/windows?format=ps1&gateway_type=agents" target="_blank" rel="noreferrer">Gateway Windows Script</a></div><p id="gateway-message" class="message"></p></article></section>`);
       const form = $("#gateway-form");
       const resetGatewayForm = () => {
         form.gateway_id.value = "";
         form.name.value = "";
-        form.type.value = "infra";
+        form.type.value = "agents";
         form.host.value = "";
         form.port.value = 8080;
         form.cluster_name.value = "default";
@@ -1455,7 +1514,7 @@ async function loadView(view) {
           }
           form.gateway_id.value = gateway.id;
           form.name.value = gateway.name || "";
-          form.type.value = gateway.type || "infra";
+          form.type.value = gateway.type || "agents";
           form.host.value = gateway.host || "";
           form.port.value = gateway.port || 8080;
           form.cluster_name.value = gateway.cluster_name || "default";
@@ -1526,7 +1585,7 @@ async function loadView(view) {
     }
     if (view === "agents") {
       const items = await api("/api/v1/agents/tokens");
-      render(`<section class="grid two"><article class="card"><h3>Instaladores e automacao</h3><div class="actions"><a class="button primary" href="/api/v1/agents/download/linux" target="_blank" rel="noreferrer">Agente Linux</a><a class="button ghost" href="/api/v1/agents/download/windows" target="_blank" rel="noreferrer">Agente Windows Setup</a><a class="button ghost" href="/api/v1/agents/download/windows?format=ps1" target="_blank" rel="noreferrer">Agente Windows Script</a><a class="button ghost" href="/api/v1/agents/download/docker" target="_blank" rel="noreferrer">Docker</a><a class="button ghost" href="/api/v1/agents/download/k8s" target="_blank" rel="noreferrer">Kubernetes</a><a class="button ghost" href="/api/v1/agents/download/otel-config?language=auto" target="_blank" rel="noreferrer">OTel multi linguagem</a></div></article><article class="card"><h3>Tokens emitidos</h3>${items.length ? table(["Nome", "Papel", "Status", "Preview"], items.map((token) => [esc(token.name), esc(token.role), token.active ? "ativo" : "revogado", `<span class="mono">${esc(token.token_preview)}</span>`])) : `<p class="muted">Nenhum token emitido.</p>`}</article></section>`);
+      render(`<section class="grid two"><article class="card"><h3>Instaladores e automacao</h3><p class="muted">Para escolher perfil Infra/Completa e modulos por licenca, use o onboarding do tenant. Estes atalhos baixam o perfil Infra padrao.</p><div class="actions"><a class="button primary" href="/api/v1/agents/download/linux?profile=infra" target="_blank" rel="noreferrer">Agente Linux</a><a class="button ghost" href="/api/v1/agents/download/windows?profile=infra" target="_blank" rel="noreferrer">Agente Windows Setup</a><a class="button ghost" href="/api/v1/agents/download/windows?format=ps1&profile=infra" target="_blank" rel="noreferrer">Agente Windows Script</a><a class="button ghost" href="/api/v1/agents/download/docker?profile=infra" target="_blank" rel="noreferrer">Docker</a><a class="button ghost" href="/api/v1/agents/download/k8s?profile=infra" target="_blank" rel="noreferrer">Kubernetes</a><a class="button ghost" href="/api/v1/agents/download/otel-config?language=auto" target="_blank" rel="noreferrer">OTel multi linguagem</a></div></article><article class="card"><h3>Tokens emitidos</h3>${items.length ? table(["Nome", "Papel", "Status", "Preview"], items.map((token) => [esc(token.name), esc(token.role), token.active ? "ativo" : "revogado", `<span class="mono">${esc(token.token_preview)}</span>`])) : `<p class="muted">Nenhum token emitido.</p>`}</article></section>`);
       return;
     }
     if (view === "tasks") {

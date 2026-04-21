@@ -5,6 +5,7 @@ Main pytest configuration and shared fixtures for backend tests
 import asyncio
 import os
 import pytest
+import pytest_asyncio
 from typing import Generator, AsyncGenerator
 from datetime import datetime, timedelta, timezone
 
@@ -30,7 +31,7 @@ def mock_env_vars(monkeypatch):
         "DATABASE_URL": "sqlite+aiosqlite:///:memory:",
         "REDIS_URL": "redis://localhost:6379/0",
         "SECRET_KEY": "test-secret-key-123456789012345678",
-        "APP_NAME": "Nexus Test",
+        "APP_NAME": "LAS Test",
         "APP_VERSION": "3.0.0-test",
         "DEBUG": "true",
         "MTLS_ENABLED": "false",
@@ -45,12 +46,13 @@ def mock_env_vars(monkeypatch):
 
 # === Database Fixtures ===
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def db_session_test():
     """Provide test database session"""
     from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
     from sqlalchemy.orm import sessionmaker
     from app.db.base import Base
+    import app.models  # noqa: F401 - ensure all ORM tables are registered
     
     # Use SQLite in-memory for tests
     engine = create_async_engine(
@@ -70,6 +72,12 @@ async def db_session_test():
         yield session
     
     await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def db_session_async(db_session_test):
+    """Backward-compatible async database session fixture."""
+    yield db_session_test
 
 
 @pytest.fixture
@@ -162,17 +170,22 @@ def auth_headers(valid_jwt_token):
 
 # === HTTP Client Fixtures ===
 
-@pytest.fixture
-def async_client(event_loop):
+@pytest_asyncio.fixture
+async def async_client(db_session_async):
     """Provide async HTTP client for API testing"""
     from httpx import AsyncClient
     from app.main import app
+    from app.db.base import get_db
+
+    async def override_get_db():
+        yield db_session_async
+
+    app.dependency_overrides[get_db] = override_get_db
     
-    async def _get_client():
-        return AsyncClient(app=app, base_url="http://test")
-    
-    client = event_loop.run_until_complete(_get_client())
-    yield client
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        yield client
+
+    app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.fixture

@@ -1,4 +1,5 @@
 from sqlalchemy import Column, String, Integer, Boolean, JSON, Text, Enum
+from sqlalchemy.orm import relationship
 from app.db.base import Base
 import enum
 
@@ -11,6 +12,8 @@ class PlanType(str, enum.Enum):
 
 
 class Tenant(Base):
+    """Customer tenant with licensing, limits, feature flags and platform settings."""
+
     __tablename__ = "tenants"
 
     name = Column(String(255), nullable=False)
@@ -38,3 +41,15 @@ class Tenant(Base):
     # License
     license_key = Column(String(255))
     license_expires_at = Column(String(30))
+
+    users = relationship("User", back_populates="tenant", lazy="selectin")
+    agents = relationship("AgentToken", back_populates="tenant", lazy="selectin")
+
+    @property
+    def is_active(self) -> bool:
+        """Compatibility alias derived from tenant status."""
+        return self.status == "active"
+
+    @is_active.setter
+    def is_active(self, value: bool) -> None:
+        self.status = "active" if value else "inactive"
