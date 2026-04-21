@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Deployment Script for LAS Plataforma de Monitoramento e Observabilidade
-Deploys the application to /srv/las-platform (Linux) or C:/las-platform (Windows)
+Deploys the application to /srv/las-plataforma (Linux) or C:/las-plataforma (Windows)
 """
 
 import os
@@ -18,11 +18,11 @@ IS_LINUX = sys.platform.startswith("linux")
 
 # Configuration - adjust paths based on OS
 if IS_WINDOWS:
-    DEPLOYMENT_PATH = Path("C:/las-platform")
-    BACKUP_PATH = Path("C:/las-platform-backups")
+    DEPLOYMENT_PATH = Path("C:/las-plataforma")
+    BACKUP_PATH = Path("C:/las-plataforma-backups")
 else:
-    DEPLOYMENT_PATH = Path("/srv/las-platform")
-    BACKUP_PATH = Path("/srv/las-platform-backups")
+    DEPLOYMENT_PATH = Path("/srv/las-plataforma")
+    BACKUP_PATH = Path("/srv/las-plataforma-backups")
 
 SOURCE_PATH = Path(__file__).resolve().parent
 LOG_PATH = DEPLOYMENT_PATH / "logs"

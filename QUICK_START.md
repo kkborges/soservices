@@ -32,8 +32,8 @@ The script will:
 
 ```bash
 # 1. Create deployment directory
-mkdir -p /srv/las-platform
-cd /srv/las-platform
+mkdir -p /srv/las-plataforma
+cd /srv/las-plataforma
 
 # 2. Create Python virtual environment
 python -m venv venv

@@ -16,17 +16,17 @@ Ele foi escrito para ser reutilizavel em qualquer ambiente (cloud ou on-premises
 
 ## Estrutura Recomendada no Servidor
 
-- `/srv/las-platform` (codigo e compose)
-- `/srv/las-platform-data` (volumes persistentes, opcional)
+- `/srv/las-plataforma` (codigo, compose e estrutura de deploy)
+- `/srv/las-plataforma-data` (volumes persistentes, opcional)
 
 ## Deploy (Stack Completa - Compose)
 
 1. Clonar o repositorio (ou copiar o codigo) para o servidor:
 
 ```bash
-sudo mkdir -p /srv/las-platform
-sudo chown -R $USER:$USER /srv/las-platform
-cd /srv/las-platform
+sudo mkdir -p /srv/las-plataforma
+sudo chown -R $USER:$USER /srv/las-plataforma
+cd /srv/las-plataforma
 
 # Exemplo:
 # git clone <URL_DO_REPOSITORIO> .
@@ -35,7 +35,7 @@ cd /srv/las-platform
 2. Subir o stack (modo "single node"):
 
 ```bash
-cd /srv/las-platform/docker
+cd /srv/las-plataforma/docker
 
 # Ajuste variaveis em um arquivo .env (opcional)
 # export POSTGRES_PASSWORD=...
@@ -65,7 +65,7 @@ curl -fsS http://localhost/ | head
 - Ver logs:
 
 ```bash
-cd /srv/las-platform/docker
+cd /srv/las-plataforma/docker
 docker compose logs -f --tail 200
 ```
 

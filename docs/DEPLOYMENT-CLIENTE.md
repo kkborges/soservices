@@ -30,7 +30,7 @@ Este guia descreve a implantacao da plataforma em ambiente de cliente, seja em n
 
 ## Passo a passo recomendado
 
-1. Criar pasta da solucao no servidor, por exemplo `/srv/las-platform`
+1. Criar pasta da solucao no servidor, por exemplo `/srv/las-plataforma`
 2. Configurar `.env` com URL publica, senhas fortes e credenciais SMTP/IA
 3. Subir banco e redis
 4. Subir API e frontend
