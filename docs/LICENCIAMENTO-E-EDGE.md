@@ -104,6 +104,14 @@ Retorno:
 - dados do tenant cliente e do tenant espelho (`slug-0`)
 - instrucoes de bootstrap mTLS e polling
 
+### Instalador rapido (Linux) com license_key
+
+Para minimizar interacao humana em on-prem, existe um instalador direto do control gateway (Linux) usando apenas `license_key` + `tenant_slug`:
+
+- `GET /api/v1/edge/download/control/linux?license_key=...&tenant_slug=...`
+
+Esse endpoint ja provisiona o token do gateway de controle, embute no script e retorna um `.sh` pronto para execucao como root.
+
 ### Tenant espelho (slug `-0`)
 
 Para cada tenant cliente `xyz`, o SaaS cria (ou garante) um tenant interno `xyz-0`.
@@ -127,4 +135,3 @@ O backend executa a triagem por IA usando `ticket_ai_service.py` antes do ticket
 - Em producao, exponha `PLATFORM_URL` (TLS publico) para bootstrap do bundle mTLS.
 - Mantenha o mTLS (`MTLS_PLATFORM_URL`) acessivel apenas para agentes/gateways (firewall e rate-limit).
 - No on-prem, use ao menos 1 gateway `control` e 2 gateways `agents` (primarios) + 1 `failover`.
-

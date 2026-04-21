@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +21,8 @@ from app.services.license_service import tenant_license_codes
 from app.services.mirror_tenant_service import EDGE_BOT_USERNAME, ensure_edge_bot_user, ensure_mirror_tenant
 from app.services.mtls_guard import require_mtls_request
 from app.services.ticket_ai_service import analyze_ticket_with_ai
-from app.services.token_service import create_gateway_token
+from app.services.license_service import gateway_config_for_type
+from app.services.token_service import create_gateway_token, build_gateway_install_script
 
 router = APIRouter(prefix="/edge", tags=["edge"])
 
@@ -40,6 +42,51 @@ class EdgeTicketPayload(BaseModel):
     environment: Optional[str] = None
     service_name: Optional[str] = None
     attachments: list[dict] = Field(default_factory=list)
+
+
+@router.get("/download/control/linux", response_class=PlainTextResponse)
+async def download_control_gateway_linux(
+    license_key: str = Query(...),
+    tenant_slug: str = Query(...),
+    instance_name: str = Query("onprem"),
+    public_endpoint: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Convenience installer for on-prem: returns a self-contained Linux installer (.sh style)
+    for the Edge Control Gateway using only the commercial license key + tenant_slug.
+    """
+    payload = EdgeRegisterPayload(
+        license_key=license_key,
+        tenant_slug=tenant_slug,
+        instance_name=instance_name,
+        public_endpoint=public_endpoint,
+    )
+    registration = await register_onprem_instance(payload, db=db)
+    token = (registration.get("control_gateway") or {}).get("token")
+    if not token:
+        raise HTTPException(status_code=500, detail="Failed to provision control gateway token")
+
+    gateway_config = gateway_config_for_type("control")
+    gateway_config = {
+        **gateway_config,
+        "provisioning_source": "edge_download",
+        "installer_os": "linux",
+        "public_endpoint": public_endpoint,
+        "transport": {"mtls_required": True, "compress_enabled": True, "encrypt_enabled": True},
+    }
+    script = build_gateway_install_script(
+        platform_url=settings.PLATFORM_URL,
+        token=token,
+        gateway_type="control",
+        gateway_config=gateway_config,
+    )
+    return PlainTextResponse(
+        content=script,
+        headers={
+            "Content-Disposition": "attachment; filename=install-las-control-gateway-linux.sh",
+        },
+    )
 
 
 async def verify_gateway_by_token(
