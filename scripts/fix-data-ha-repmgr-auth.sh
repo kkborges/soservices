@@ -48,12 +48,26 @@ echo "Aplicando ajuste de senha do usuario repmgr no banco (sem exibir segredos)
 
 # We run psql inside the container. Local socket access is used, avoiding network auth.
 # Use psql variable quoting (:'var') to safely escape/quote the password.
-docker exec -i -e NEW_REPMGR_PASSWORD="$repmgr_password" "$PG_PRIMARY_CONTAINER" sh -s <<'SH'
+apply_ok=""
+for _i in $(seq 1 60); do
+  if docker exec -i -e NEW_REPMGR_PASSWORD="$repmgr_password" "$PG_PRIMARY_CONTAINER" sh -s <<'SH'
 set -e
 psql -U postgres -d postgres -v ON_ERROR_STOP=1 -v new_pw="$NEW_REPMGR_PASSWORD" <<'SQL'
 SELECT format('ALTER USER repmgr WITH PASSWORD %s', quote_literal(:'new_pw')) \gexec
 SQL
 SH
+  then
+    apply_ok="yes"
+    break
+  fi
+  sleep 2
+done
+
+if [[ -z "${apply_ok:-}" ]]; then
+  echo "Falha ao executar psql no container $PG_PRIMARY_CONTAINER (provavel loop de restart)."
+  echo "Tente novamente apos estabilizar o container, ou desabilite temporariamente restart policy para aplicar o patch."
+  exit 1
+fi
 
 echo "Reiniciando containers pg-0/pg-1 e pgpool para re-negociar replicacao..."
 docker restart "$PG_PRIMARY_CONTAINER" >/dev/null
