@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "las.fullname" . }}-frontend
+  namespace: {{ include "las.namespace" . }}
+  labels:
+    {{- include "las.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ include "las.name" . }}
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.service.frontend.port }}
+      targetPort: http

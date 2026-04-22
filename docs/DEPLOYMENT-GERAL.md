@@ -103,10 +103,37 @@ Recomendado para cloud/on-prem com padrao corporativo.
 - `Deployment` para API (2+ replicas)
 - `Service` interno para API
 - `Ingress` (TLS) para `las.<dominio>` e `api.<dominio>`
-- `StatefulSet`/servico gerenciado para Postgres e Redis
+- Postgres/Redis: servico gerenciado (recomendado) ou operadores/StatefulSets
 - Gateways como `Deployment` por tenant, ou como nodes dedicados (dependendo do modelo)
 
 Observacao: a plataforma suporta HA, mas a estrategia final de banco/cache depende do padrao do cliente.
+
+### 4.1 Helm (artefatos no repositorio)
+
+Chart: `k8s/helm/las-platform`
+
+O chart sobe:
+
+- API (replicas)
+- Frontend (replicas) com Nginx garantindo que `/api` vai para a API (evita bug de proxy)
+- Ingress web (`las.<dominio>`) e API (`api.<dominio>`)
+- Opcional: Ingress mTLS (`mtls-api.<dominio>`) para trafego de agentes/gateways
+
+Exemplo (ajuste repositorios e segredos):
+
+```bash
+kubectl create namespace las
+helm upgrade --install las k8s/helm/las-platform -n las \
+  --set images.api.repository=REGISTRY/las-backend \
+  --set images.frontend.repository=REGISTRY/las-frontend \
+  --set env.POSTGRES_HOST=SEU_POSTGRES \
+  --set env.POSTGRES_PASSWORD=SUA_SENHA_POSTGRES \
+  --set env.REDIS_HOST=SEU_REDIS \
+  --set env.REDIS_PASSWORD=SUA_SENHA_REDIS \
+  --set env.SECRET_KEY=SUA_SECRET_KEY_64_CHARS \
+  --set ingress.hosts.web=las.seudominio.com \
+  --set ingress.hosts.api=api.seudominio.com
+```
 
 ## 5) Deploy por Binarios (Server/API, Gateways e Agentes)
 

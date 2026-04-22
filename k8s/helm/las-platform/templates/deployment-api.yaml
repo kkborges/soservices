@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "las.fullname" . }}-api
+  namespace: {{ include "las.namespace" . }}
+  labels:
+    {{- include "las.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas.api }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "las.name" . }}
+      app.kubernetes.io/component: api
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "las.labels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}
+      containers:
+        - name: api
+          image: "{{ .Values.images.api.repository }}:{{ .Values.images.api.tag }}"
+          imagePullPolicy: {{ .Values.images.api.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.api.port }}
+              name: http
+          envFrom:
+            - secretRef:
+                name: {{ include "las.fullname" . }}-env
+          env:
+            - name: WORKERS
+              value: "1"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.resources.api | nindent 12 }}

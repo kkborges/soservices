@@ -1,0 +1,33 @@
+{{- if .Values.mtlsIngress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "las.fullname" . }}-mtls
+  namespace: {{ include "las.namespace" . }}
+  labels:
+    {{- include "las.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/auth-tls-secret: "{{ include "las.namespace" . }}/{{ .Values.mtlsIngress.clientCaSecretName }}"
+    {{- with .Values.mtlsIngress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.mtlsIngress.className | quote }}
+  {{- if .Values.mtlsIngress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.mtlsIngress.host | quote }}
+      secretName: {{ .Values.mtlsIngress.tls.secretName | quote }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.mtlsIngress.host | quote }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "las.fullname" . }}-api
+                port:
+                  number: {{ .Values.service.api.port }}
+{{- end }}

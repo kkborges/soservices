@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "las.fullname" . }}-frontend
+  namespace: {{ include "las.namespace" . }}
+  labels:
+    {{- include "las.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas.frontend }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "las.name" . }}
+      app.kubernetes.io/component: frontend
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "las.labels" . | nindent 8 }}
+        app.kubernetes.io/component: frontend
+    spec:
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}
+      containers:
+        - name: frontend
+          image: "{{ .Values.images.frontend.repository }}:{{ .Values.images.frontend.tag }}"
+          imagePullPolicy: {{ .Values.images.frontend.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.frontend.port }}
+              name: http
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources.frontend | nindent 12 }}
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: {{ include "las.fullname" . }}-frontend-nginx

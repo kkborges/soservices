@@ -1,0 +1,95 @@
+# Default values for LAS Platform (Kubernetes/Helm).
+#
+# This chart focuses on stateless components (API + Frontend + Ingress).
+# For production, prefer managed PostgreSQL/Redis or operators.
+#
+# Notes:
+# - Browser users do NOT use mTLS.
+# - Agents/Gateways SHOULD use mTLS (see mtlsIngress.* below).
+
+namespaceOverride: ""
+
+images:
+  api:
+    repository: las/backend
+    tag: "4.0.0"
+    pullPolicy: IfNotPresent
+  frontend:
+    repository: las/frontend
+    tag: "4.0.0"
+    pullPolicy: IfNotPresent
+
+replicas:
+  api: 2
+  frontend: 2
+
+resources:
+  api: {}
+  frontend: {}
+
+env:
+  # Database (external or in-cluster)
+  POSTGRES_HOST: "postgres.default.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "las"
+  POSTGRES_USER: "las"
+  POSTGRES_PASSWORD: "CHANGE_ME"
+
+  # Redis
+  REDIS_HOST: "redis.default.svc.cluster.local"
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: "CHANGE_ME"
+
+  # App secrets
+  SECRET_KEY: "CHANGE_ME_TO_A_64_CHAR_RANDOM_STRING"
+  DEBUG: "false"
+
+  # Public URLs (used in links and onboarding)
+  PUBLIC_WEB_URL: "https://las.example.com"
+  PLATFORM_URL: "https://api.example.com"
+
+  # Optional AI providers
+  AI_PROVIDER: "openai"
+  OPENAI_API_KEY: ""
+  ANTHROPIC_API_KEY: ""
+  GEMINI_API_KEY: ""
+
+service:
+  api:
+    port: 8000
+  frontend:
+    port: 80
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations: {}
+  hosts:
+    web: "las.example.com"
+    api: "api.example.com"
+  tls:
+    enabled: false
+    secretNameWeb: ""
+    secretNameApi: ""
+
+# mTLS for agent/gateway traffic.
+# Implementation option: NGINX Ingress Controller with auth-tls annotations.
+# If you don't use NGINX Ingress, disable this and place an mTLS edge/load-balancer in front.
+mtlsIngress:
+  enabled: false
+  className: "nginx"
+  host: "mtls-api.example.com"
+  # A secret containing CA for client cert verification (must include ca.crt).
+  clientCaSecretName: "las-mtls-client-ca"
+  annotations:
+    nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
+    nginx.ingress.kubernetes.io/auth-tls-verify-depth: "2"
+    nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+  tls:
+    enabled: false
+    secretName: ""
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,0 +1,70 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "las.fullname" . }}-web
+  namespace: {{ include "las.namespace" . }}
+  labels:
+    {{- include "las.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.hosts.web | quote }}
+      secretName: {{ .Values.ingress.tls.secretNameWeb | quote }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.hosts.web | quote }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "las.fullname" . }}-api
+                port:
+                  number: {{ .Values.service.api.port }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "las.fullname" . }}-frontend
+                port:
+                  number: {{ .Values.service.frontend.port }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "las.fullname" . }}-api
+  namespace: {{ include "las.namespace" . }}
+  labels:
+    {{- include "las.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.hosts.api | quote }}
+      secretName: {{ .Values.ingress.tls.secretNameApi | quote }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.hosts.api | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "las.fullname" . }}-api
+                port:
+                  number: {{ .Values.service.api.port }}
+{{- end }}
