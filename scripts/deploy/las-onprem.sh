@@ -10,8 +10,13 @@ cd "$ROOT_DIR"
 # The compose file already sets `name: las-onprem`, but we keep it here for clarity.
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-las-onprem}"
 
+ONPREM_FILE="docker-compose.onprem-ha.images.yml"
+if [ "${USE_BUILD:-0}" = "1" ]; then
+  ONPREM_FILE="docker-compose.onprem-ha.yml"
+fi
+
 FILES=(
-  -f docker-compose.onprem-ha.yml
+  -f "$ONPREM_FILE"
 )
 
 cmd="${1:-}"

@@ -59,7 +59,10 @@ curl -fsS http://localhost/api/health
 
 ### 3.2 HA (API active-active)
 
-Arquivo: `docker/docker-compose.ha.yml`
+Arquivos:
+
+- `docker/docker-compose.ha.yml` (dev, usa `build:`)
+- `docker/docker-compose.ha.images.yml` (producao, **nao depende de buildx**; usa imagens prontas)
 
 - Sobe `las-api-a`, `las-api-b`
 - Sobe `las-api-ha` (nginx LB interno para API)
@@ -71,6 +74,15 @@ cp .env.example .env
 # Edite .env com segredos fortes e NAO rotacione depois que volumes do Postgres/Redis forem criados.
 docker-compose -f docker-compose.ha.yml up -d --build
 docker-compose -f docker-compose.ha.yml ps
+```
+
+Producao (images-only):
+
+```bash
+cd docker
+cp .env.example .env
+docker-compose -f docker-compose.ha.images.yml up -d
+docker-compose -f docker-compose.ha.images.yml ps
 ```
 
 Importante: em modo HA, nao suba junto o `docker-compose.yml` (single node), para evitar dois Postgres diferentes e confusao de portas/enderecos.

@@ -10,9 +10,14 @@ cd "$ROOT_DIR"
 # Keep stable if already set by the environment; otherwise use a clear default.
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-las-saas}"
 
+HA_FILE="docker-compose.ha.images.yml"
+if [ "${USE_BUILD:-0}" = "1" ]; then
+  HA_FILE="docker-compose.ha.yml"
+fi
+
 FILES=(
   -f docker-compose.data-ha.yml
-  -f docker-compose.ha.yml
+  -f "$HA_FILE"
   -f docker-compose.proxy-manager.yml
 )
 
