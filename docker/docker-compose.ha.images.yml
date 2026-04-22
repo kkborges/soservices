@@ -9,6 +9,8 @@ services:
     image: ${LAS_BACKEND_IMAGE:-las-backend-release:latest}
     container_name: las-api-a
     restart: unless-stopped
+    command: >
+      /bin/sh -c "gunicorn app.main:app --workers $${WORKERS:-1} --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --timeout 120 --access-logfile - --error-logfile -"
     env_file:
       - .env
     environment:
@@ -41,6 +43,8 @@ services:
     image: ${LAS_BACKEND_IMAGE:-las-backend-release:latest}
     container_name: las-api-b
     restart: unless-stopped
+    command: >
+      /bin/sh -c "gunicorn app.main:app --workers $${WORKERS:-1} --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --timeout 120 --access-logfile - --error-logfile -"
     env_file:
       - .env
     environment:
