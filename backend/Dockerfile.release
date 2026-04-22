@@ -35,8 +35,10 @@ COPY . .
 
 # Compile app code and remove sources to reduce exposure.
 # NOTE: this is obfuscation-by-packaging (not perfect protection).
-RUN python -m compileall -q /app/app && \
-    find /app/app -type f -name '*.py' -delete
+# IMPORTANT: Use `-b` (legacy .pyc next to modules) so imports keep working even after deleting .py files.
+RUN python -m compileall -q -b /app/app && \
+    find /app/app -type f -name '*.py' -delete && \
+    find /app/app -type d -name '__pycache__' -prune -exec rm -rf {} +
 
 
 FROM python:3.12-slim
