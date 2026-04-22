@@ -177,6 +177,10 @@ services:
       - |
           set -eu
           PW="$${REDIS_PASSWORD:-redis_password}"
+          # Use send-binary so Redis always receives a real CRLF terminator.
+          # This avoids intermittent "Layer7 timeout" when inline protocol isn't terminated as expected.
+          AUTH_HEX="$$(printf 'AUTH %s\r\n' \"$$PW\" | hexdump -v -e '1/1 "%02x"')"
+          INFO_HEX="$$(printf 'INFO replication\r\n' | hexdump -v -e '1/1 "%02x"')"
           cat > /tmp/haproxy.cfg <<EOF
           global
               log stdout format raw local0
@@ -187,7 +191,7 @@ services:
               timeout connect 2s
               timeout client 60s
               timeout server 60s
-              timeout check 1s
+              timeout check 2s
               log global
 
           frontend redis_front
@@ -197,9 +201,9 @@ services:
           backend redis_master
               option tcp-check
               tcp-check connect
-              tcp-check send AUTH\ $$PW\r\n
+              tcp-check send-binary $$AUTH_HEX
               tcp-check expect string +OK
-              tcp-check send INFO\ replication\r\n
+              tcp-check send-binary $$INFO_HEX
               tcp-check expect string role:master
               server redis-node-0 redis-node-0:6379 check inter 3s fall 2 rise 1
               server redis-node-1 redis-node-1:6379 check inter 3s fall 2 rise 1 backup
