@@ -1,3 +1,5 @@
+name: las-saas
+
 networks:
   las-net:
     external: true

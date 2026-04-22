@@ -1,10 +1,14 @@
+name: las-saas
+
 networks:
   las-net:
     external: true
 
 volumes:
   npm_data:
+    name: las_npm_data
   npm_letsencrypt:
+    name: las_npm_letsencrypt
 
 services:
   nginx-proxy-manager:

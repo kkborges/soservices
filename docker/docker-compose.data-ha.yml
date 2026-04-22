@@ -1,13 +1,20 @@
+name: las-saas
+
 networks:
   las-net:
     external: true
 
 volumes:
   pg_0_data:
+    name: las_pg_0_data
   pg_1_data:
+    name: las_pg_1_data
   redis_0_data:
+    name: las_redis_0_data
   redis_1_data:
+    name: las_redis_1_data
   redis_2_data:
+    name: las_redis_2_data
 
 services:
   pg-0:
