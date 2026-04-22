@@ -79,7 +79,7 @@ services:
     env_file:
       - .env.onprem
     command: >
-      sh -c "redis-server --appendonly yes --requirepass '$${REDIS_PASSWORD}'"
+      sh -c "redis-server --appendonly yes --requirepass \"$${REDIS_PASSWORD}\""
     volumes:
       - redis_0_data:/data
     networks:
@@ -91,7 +91,7 @@ services:
     env_file:
       - .env.onprem
     command: >
-      sh -c "redis-server --appendonly yes --requirepass '$${REDIS_PASSWORD}' --masterauth '$${REDIS_PASSWORD}' --replicaof redis-node-0 6379"
+      sh -c "redis-server --appendonly yes --requirepass \"$${REDIS_PASSWORD}\" --masterauth \"$${REDIS_PASSWORD}\" --replicaof redis-node-0 6379"
     volumes:
       - redis_1_data:/data
     networks:
@@ -105,7 +105,7 @@ services:
     env_file:
       - .env.onprem
     command: >
-      sh -c "redis-server --appendonly yes --requirepass '$${REDIS_PASSWORD}' --masterauth '$${REDIS_PASSWORD}' --replicaof redis-node-0 6379"
+      sh -c "redis-server --appendonly yes --requirepass \"$${REDIS_PASSWORD}\" --masterauth \"$${REDIS_PASSWORD}\" --replicaof redis-node-0 6379"
     volumes:
       - redis_2_data:/data
     networks:
