@@ -1,5 +1,3 @@
-version: "3.9"
-
 # ============================================================
 # LAS Plataforma de Monitoramento e Observabilidade
 # Full Stack (Docker Compose)
@@ -279,4 +277,3 @@ services:
       - las-net
     profiles:
       - dev
-
