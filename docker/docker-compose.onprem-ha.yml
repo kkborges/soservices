@@ -186,7 +186,7 @@ services:
           backend redis_master
               option tcp-check
               tcp-check connect
-              tcp-check send AUTH\ $PW\r\n
+              tcp-check send AUTH\ $$PW\r\n
               tcp-check expect string +OK
               tcp-check send INFO\ replication\r\n
               tcp-check expect string role:master
