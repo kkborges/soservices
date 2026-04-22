@@ -21,6 +21,7 @@ set -euo pipefail
 
 PG_PRIMARY_CONTAINER="${PG_PRIMARY_CONTAINER:-pg-0}"
 PG_STANDBY_CONTAINER="${PG_STANDBY_CONTAINER:-pg-1}"
+PGPOOL_CONTAINER="${PGPOOL_CONTAINER:-pgpool}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker nao encontrado no PATH."
@@ -59,11 +60,11 @@ docker restart "$PG_PRIMARY_CONTAINER" >/dev/null
 if docker inspect "$PG_STANDBY_CONTAINER" >/dev/null 2>&1; then
   docker restart "$PG_STANDBY_CONTAINER" >/dev/null
 fi
-if docker inspect pgpool >/dev/null 2>&1; then
-  docker restart pgpool >/dev/null
+if docker inspect "$PGPOOL_CONTAINER" >/dev/null 2>&1; then
+  docker restart "$PGPOOL_CONTAINER" >/dev/null
 fi
 
 echo "OK. Verifique logs com:"
 echo "  docker logs $PG_PRIMARY_CONTAINER --tail 100"
 echo "  docker logs $PG_STANDBY_CONTAINER --tail 100"
-echo "  docker logs pgpool --tail 100"
+echo "  docker logs $PGPOOL_CONTAINER --tail 100"
