@@ -7,8 +7,10 @@ networks:
 volumes:
   npm_data:
     name: las_npm_data
+    external: true
   npm_letsencrypt:
     name: las_npm_letsencrypt
+    external: true
 
 services:
   nginx-proxy-manager:

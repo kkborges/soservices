@@ -7,14 +7,19 @@ networks:
 volumes:
   pg_0_data:
     name: las_pg_0_data
+    external: true
   pg_1_data:
     name: las_pg_1_data
+    external: true
   redis_0_data:
     name: las_redis_0_data
+    external: true
   redis_1_data:
     name: las_redis_1_data
+    external: true
   redis_2_data:
     name: las_redis_2_data
+    external: true
 
 services:
   pg-0:
