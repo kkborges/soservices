@@ -173,10 +173,10 @@ services:
 
           defaults
               mode tcp
-              timeout connect 5s
+              timeout connect 2s
               timeout client 60s
               timeout server 60s
-              timeout check 5s
+              timeout check 1s
               log global
 
           frontend redis_front
@@ -190,9 +190,9 @@ services:
               tcp-check expect string +OK
               tcp-check send INFO\ replication\r\n
               tcp-check expect string role:master
-              server redis-node-0 redis-node-0:6379 check inter 2s fall 2 rise 1
-              server redis-node-1 redis-node-1:6379 check inter 2s fall 2 rise 1
-              server redis-node-2 redis-node-2:6379 check inter 2s fall 2 rise 1
+              server redis-node-0 redis-node-0:6379 check inter 3s fall 2 rise 1
+              server redis-node-1 redis-node-1:6379 check inter 3s fall 2 rise 1 backup
+              server redis-node-2 redis-node-2:6379 check inter 3s fall 2 rise 1 backup
           EOF
           exec haproxy -f /tmp/haproxy.cfg
     networks:
