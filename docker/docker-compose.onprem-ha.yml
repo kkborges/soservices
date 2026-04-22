@@ -160,8 +160,41 @@ services:
     restart: unless-stopped
     env_file:
       - .env.onprem
-    command: >
-      sh -c "set -eu; PW=\"$${REDIS_PASSWORD}\"; printf 'global\\n    log stdout format raw local0\\n    maxconn 4096\\n\\ndefaults\\n    mode tcp\\n    timeout connect 5s\\n    timeout client 60s\\n    timeout server 60s\\n    timeout check 5s\\n    log global\\n\\nfrontend redis_front\\n    bind *:6379\\n    default_backend redis_master\\n\\nbackend redis_master\\n    option tcp-check\\n    tcp-check connect\\n    tcp-check send AUTH\\ %s\\r\\n\\n    tcp-check expect string +OK\\n    tcp-check send INFO\\ replication\\r\\n\\n    tcp-check expect string role:master\\n    server redis-node-0 redis-node-0:6379 check inter 2s fall 2 rise 1\\n    server redis-node-1 redis-node-1:6379 check inter 2s fall 2 rise 1\\n    server redis-node-2 redis-node-2:6379 check inter 2s fall 2 rise 1\\n' \"$$PW\" > /tmp/haproxy.cfg; exec haproxy -f /tmp/haproxy.cfg"
+    command:
+      - sh
+      - -c
+      - |
+          set -eu
+          PW="$${REDIS_PASSWORD}"
+          cat > /tmp/haproxy.cfg <<EOF
+          global
+              log stdout format raw local0
+              maxconn 4096
+
+          defaults
+              mode tcp
+              timeout connect 5s
+              timeout client 60s
+              timeout server 60s
+              timeout check 5s
+              log global
+
+          frontend redis_front
+              bind *:6379
+              default_backend redis_master
+
+          backend redis_master
+              option tcp-check
+              tcp-check connect
+              tcp-check send AUTH\ $PW\r\n
+              tcp-check expect string +OK
+              tcp-check send INFO\ replication\r\n
+              tcp-check expect string role:master
+              server redis-node-0 redis-node-0:6379 check inter 2s fall 2 rise 1
+              server redis-node-1 redis-node-1:6379 check inter 2s fall 2 rise 1
+              server redis-node-2 redis-node-2:6379 check inter 2s fall 2 rise 1
+          EOF
+          exec haproxy -f /tmp/haproxy.cfg
     networks:
       - las-onprem-net
     depends_on:
