@@ -6,6 +6,7 @@ networks:
 
 services:
   las-api-a:
+    image: las-backend-release:latest
     build:
       context: ../backend
       dockerfile: Dockerfile.release
@@ -40,6 +41,7 @@ services:
       retries: 3
 
   las-api-b:
+    image: las-backend-release:latest
     build:
       context: ../backend
       dockerfile: Dockerfile.release
@@ -98,4 +100,3 @@ services:
     depends_on:
       - las-api-a
       - las-api-b
-

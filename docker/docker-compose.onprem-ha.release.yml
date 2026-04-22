@@ -209,6 +209,7 @@ services:
   # LAS API HA (active-active)
   # ============================================================
   las-api-a:
+    image: las-backend-release:latest
     build:
       context: ../backend
       dockerfile: Dockerfile.release
@@ -246,6 +247,7 @@ services:
       - redis-haproxy
 
   las-api-b:
+    image: las-backend-release:latest
     build:
       context: ../backend
       dockerfile: Dockerfile.release
@@ -392,4 +394,3 @@ volumes:
   onprem_uploads:
   onprem_npm_data:
   onprem_npm_letsencrypt:
-
