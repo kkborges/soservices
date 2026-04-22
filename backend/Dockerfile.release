@@ -64,9 +64,8 @@ COPY --from=builder /app /app
 
 # Create non-root user
 RUN adduser --disabled-password --gecos '' las && \
-    chown -R las:las /app /ms-playwright
+    chown -R las:las /app /ms-playwright /opt/venv
 
 USER las
 
 CMD ["/bin/sh", "-lc", "gunicorn app.main:app --workers ${WORKERS:-1} --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --timeout 120 --access-logfile - --error-logfile -"]
-
