@@ -33,6 +33,7 @@ venv/
 .env.*
 !.env.example
 !docker/.env.example
+!docker/.env.onprem.example
 *.pem
 *.key
 *.crt

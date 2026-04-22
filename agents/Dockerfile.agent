@@ -1,0 +1,13 @@
+FROM python:3.12-slim
+
+WORKDIR /opt/las
+
+# psutil is required by las_agent.py
+RUN pip install --no-cache-dir --upgrade pip \
+  && pip install --no-cache-dir psutil
+
+COPY shared/las_agent.py /opt/las/las_agent.py
+
+# Default: run as root (on-prem self-monitoring often needs host PID namespace + privileged).
+ENTRYPOINT ["python", "/opt/las/las_agent.py"]
+

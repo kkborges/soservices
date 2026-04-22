@@ -1,0 +1,365 @@
+name: las-onprem
+
+services:
+  # ============================================================
+  # Data HA (PostgreSQL repmgr + pgpool)
+  # ============================================================
+  pg-0:
+    image: bitnamilegacy/postgresql-repmgr:latest
+    restart: unless-stopped
+    env_file:
+      - .env.onprem
+    environment:
+      POSTGRESQL_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRESQL_USERNAME: ${POSTGRES_USER}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRESQL_DATABASE: ${POSTGRES_DB}
+      REPMGR_PASSWORD: ${REPMGR_PASSWORD}
+      REPMGR_PRIMARY_HOST: pg-0
+      REPMGR_PARTNER_NODES: pg-0,pg-1
+      REPMGR_NODE_NAME: pg-0
+      REPMGR_NODE_NETWORK_NAME: pg-0
+    volumes:
+      - pg_0_data:/bitnami/postgresql
+    networks:
+      - las-onprem-net
+
+  pg-1:
+    image: bitnamilegacy/postgresql-repmgr:latest
+    restart: unless-stopped
+    env_file:
+      - .env.onprem
+    environment:
+      POSTGRESQL_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRESQL_USERNAME: ${POSTGRES_USER}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRESQL_DATABASE: ${POSTGRES_DB}
+      REPMGR_PASSWORD: ${REPMGR_PASSWORD}
+      REPMGR_PRIMARY_HOST: pg-0
+      REPMGR_PARTNER_NODES: pg-0,pg-1
+      REPMGR_NODE_NAME: pg-1
+      REPMGR_NODE_NETWORK_NAME: pg-1
+    volumes:
+      - pg_1_data:/bitnami/postgresql
+    networks:
+      - las-onprem-net
+    depends_on:
+      - pg-0
+
+  pgpool:
+    image: bitnamilegacy/pgpool:latest
+    restart: unless-stopped
+    env_file:
+      - .env.onprem
+    environment:
+      PGPOOL_BACKEND_NODES: 0:pg-0:5432,1:pg-1:5432
+      PGPOOL_SR_CHECK_USER: repmgr
+      PGPOOL_SR_CHECK_PASSWORD: ${REPMGR_PASSWORD}
+      PGPOOL_POSTGRES_USERNAME: postgres
+      PGPOOL_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGPOOL_ADMIN_USERNAME: ${PGPOOL_ADMIN_USERNAME}
+      PGPOOL_ADMIN_PASSWORD: ${PGPOOL_ADMIN_PASSWORD}
+      PGPOOL_POSTGRES_CUSTOM_USERS: ${POSTGRES_USER}
+      PGPOOL_POSTGRES_CUSTOM_PASSWORDS: ${POSTGRES_PASSWORD}
+      PGPOOL_ENABLE_LOAD_BALANCING: "no"
+      PGPOOL_PARAMS_FAILOVER_ON_BACKEND_ERROR: "on"
+      PGPOOL_PARAMS_FAILOVER_ON_BACKEND_SHUTDOWN: "on"
+    networks:
+      - las-onprem-net
+    depends_on:
+      - pg-0
+      - pg-1
+
+  # ============================================================
+  # Redis HA (replicas + sentinels + haproxy)
+  # ============================================================
+  redis-node-0:
+    image: redis:7-alpine
+    restart: unless-stopped
+    env_file:
+      - .env.onprem
+    command: >
+      sh -c "redis-server --appendonly yes --requirepass '$${REDIS_PASSWORD}'"
+    volumes:
+      - redis_0_data:/data
+    networks:
+      - las-onprem-net
+
+  redis-node-1:
+    image: redis:7-alpine
+    restart: unless-stopped
+    env_file:
+      - .env.onprem
+    command: >
+      sh -c "redis-server --appendonly yes --requirepass '$${REDIS_PASSWORD}' --masterauth '$${REDIS_PASSWORD}' --replicaof redis-node-0 6379"
+    volumes:
+      - redis_1_data:/data
+    networks:
+      - las-onprem-net
+    depends_on:
+      - redis-node-0
+
+  redis-node-2:
+    image: redis:7-alpine
+    restart: unless-stopped
+    env_file:
+      - .env.onprem
+    command: >
+      sh -c "redis-server --appendonly yes --requirepass '$${REDIS_PASSWORD}' --masterauth '$${REDIS_PASSWORD}' --replicaof redis-node-0 6379"
+    volumes:
+      - redis_2_data:/data
+    networks:
+      - las-onprem-net
+    depends_on:
+      - redis-node-0
+
+  redis-sentinel-0:
+    image: redis:7-alpine
+    restart: unless-stopped
+    env_file:
+      - .env.onprem
+    command: >
+      sh -c "set -eu; PW=\"$${REDIS_PASSWORD}\"; printf 'port 26379\\nbind 0.0.0.0\\nsentinel monitor lasmaster redis-node-0 6379 2\\nsentinel auth-pass lasmaster %s\\nsentinel down-after-milliseconds lasmaster 5000\\nsentinel failover-timeout lasmaster 10000\\nsentinel parallel-syncs lasmaster 1\\nsentinel resolve-hostnames yes\\n' \"$$PW\" > /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel"
+    networks:
+      - las-onprem-net
+    depends_on:
+      - redis-node-0
+      - redis-node-1
+      - redis-node-2
+
+  redis-sentinel-1:
+    image: redis:7-alpine
+    restart: unless-stopped
+    env_file:
+      - .env.onprem
+    command: >
+      sh -c "set -eu; PW=\"$${REDIS_PASSWORD}\"; printf 'port 26379\\nbind 0.0.0.0\\nsentinel monitor lasmaster redis-node-0 6379 2\\nsentinel auth-pass lasmaster %s\\nsentinel down-after-milliseconds lasmaster 5000\\nsentinel failover-timeout lasmaster 10000\\nsentinel parallel-syncs lasmaster 1\\nsentinel resolve-hostnames yes\\n' \"$$PW\" > /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel"
+    networks:
+      - las-onprem-net
+    depends_on:
+      - redis-node-0
+      - redis-node-1
+      - redis-node-2
+
+  redis-sentinel-2:
+    image: redis:7-alpine
+    restart: unless-stopped
+    env_file:
+      - .env.onprem
+    command: >
+      sh -c "set -eu; PW=\"$${REDIS_PASSWORD}\"; printf 'port 26379\\nbind 0.0.0.0\\nsentinel monitor lasmaster redis-node-0 6379 2\\nsentinel auth-pass lasmaster %s\\nsentinel down-after-milliseconds lasmaster 5000\\nsentinel failover-timeout lasmaster 10000\\nsentinel parallel-syncs lasmaster 1\\nsentinel resolve-hostnames yes\\n' \"$$PW\" > /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel"
+    networks:
+      - las-onprem-net
+    depends_on:
+      - redis-node-0
+      - redis-node-1
+      - redis-node-2
+
+  redis-haproxy:
+    image: haproxy:2.9-alpine
+    restart: unless-stopped
+    env_file:
+      - .env.onprem
+    command: >
+      sh -c "set -eu; PW=\"$${REDIS_PASSWORD}\"; printf 'global\\n    log stdout format raw local0\\n    maxconn 4096\\n\\ndefaults\\n    mode tcp\\n    timeout connect 5s\\n    timeout client 60s\\n    timeout server 60s\\n    timeout check 5s\\n    log global\\n\\nfrontend redis_front\\n    bind *:6379\\n    default_backend redis_master\\n\\nbackend redis_master\\n    option tcp-check\\n    tcp-check connect\\n    tcp-check send AUTH\\\\ %s\\\\r\\\\n\\n    tcp-check expect string +OK\\n    tcp-check send INFO\\\\ replication\\\\r\\\\n\\n    tcp-check expect string role:master\\n    server redis-node-0 redis-node-0:6379 check inter 2s fall 2 rise 1\\n    server redis-node-1 redis-node-1:6379 check inter 2s fall 2 rise 1\\n    server redis-node-2 redis-node-2:6379 check inter 2s fall 2 rise 1\\n' \"$$PW\" > /tmp/haproxy.cfg; exec haproxy -f /tmp/haproxy.cfg"
+    networks:
+      - las-onprem-net
+    depends_on:
+      - redis-node-0
+      - redis-node-1
+      - redis-node-2
+      - redis-sentinel-0
+      - redis-sentinel-1
+      - redis-sentinel-2
+
+  # ============================================================
+  # LAS API HA (active-active)
+  # ============================================================
+  las-api-a:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env.onprem
+    environment:
+      POSTGRES_HOST: pgpool
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      REDIS_HOST: redis-haproxy
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_SENTINELS: redis-sentinel-0:26379,redis-sentinel-1:26379,redis-sentinel-2:26379
+      REDIS_MASTER_NAME: lasmaster
+      WORKERS: 1
+      HA_MODE: active-active
+      API_CLUSTER_EXPECTED_REPLICAS: 2
+      API_INSTANCE_ID: onprem-api-a
+      POSTGRES_HA_MODE: pgpool-repmgr
+      REDIS_HA_MODE: sentinel
+      MTLS_STORAGE_DIR: /app/runtime/mtls
+      PLATFORM_URL: ${ONPREM_PUBLIC_API_URL}
+      PUBLIC_WEB_URL: ${ONPREM_PUBLIC_WEB_URL}
+    networks:
+      - las-onprem-net
+    volumes:
+      - onprem_mtls:/app/runtime/mtls
+      - onprem_uploads:/app/uploads
+      - onprem_logs:/app/logs
+    depends_on:
+      - pgpool
+      - redis-haproxy
+
+  las-api-b:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env.onprem
+    environment:
+      POSTGRES_HOST: pgpool
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      REDIS_HOST: redis-haproxy
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_SENTINELS: redis-sentinel-0:26379,redis-sentinel-1:26379,redis-sentinel-2:26379
+      REDIS_MASTER_NAME: lasmaster
+      WORKERS: 1
+      HA_MODE: active-active
+      API_CLUSTER_EXPECTED_REPLICAS: 2
+      API_INSTANCE_ID: onprem-api-b
+      POSTGRES_HA_MODE: pgpool-repmgr
+      REDIS_HA_MODE: sentinel
+      MTLS_STORAGE_DIR: /app/runtime/mtls
+      PLATFORM_URL: ${ONPREM_PUBLIC_API_URL}
+      PUBLIC_WEB_URL: ${ONPREM_PUBLIC_WEB_URL}
+    networks:
+      - las-onprem-net
+    volumes:
+      - onprem_mtls:/app/runtime/mtls
+      - onprem_uploads:/app/uploads
+      - onprem_logs:/app/logs
+    depends_on:
+      - pgpool
+      - redis-haproxy
+
+  las-api-ha:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - ./nginx-api-ha.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - las-onprem-net
+    depends_on:
+      - las-api-a
+      - las-api-b
+
+  las-frontend-ha:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    volumes:
+      - ./nginx-ha.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - las-onprem-net
+    depends_on:
+      - las-api-ha
+
+  # ============================================================
+  # mTLS Edge (agents/gateways)
+  # Exposes a dedicated port because NPM can't terminate mTLS.
+  # ============================================================
+  las-mtls-edge:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    env_file:
+      - .env.onprem
+    ports:
+      - "${ONPREM_MTLS_PORT:-9443}:8443"
+    volumes:
+      - ./nginx-mtls.conf:/etc/nginx/conf.d/default.conf:ro
+      - onprem_mtls:/etc/nginx/mtls:ro
+    networks:
+      - las-onprem-net
+    depends_on:
+      - las-api-a
+      - las-api-b
+
+  # ============================================================
+  # Nginx Proxy Manager (HTTP/TLS edge for users)
+  # ============================================================
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:latest
+    restart: unless-stopped
+    ports:
+      - "${ONPREM_HTTP_PORT:-8080}:80"
+      - "${ONPREM_NPM_UI_PORT:-8181}:81"
+      - "${ONPREM_HTTPS_PORT:-8443}:443"
+    volumes:
+      - onprem_npm_data:/data
+      - onprem_npm_letsencrypt:/etc/letsencrypt
+    networks:
+      - las-onprem-net
+
+  # ============================================================
+  # Self-monitoring (optional): agent in host PID namespace.
+  # It will show platform metrics as a host inside the tenant.
+  # ============================================================
+  las-self-agent:
+    build:
+      context: ../agents
+      dockerfile: Dockerfile.agent
+    restart: unless-stopped
+    pid: host
+    privileged: true
+    environment:
+      LAS_CONFIG: /etc/las/agent.conf
+    volumes:
+      - ./onprem-agent.conf:/etc/las/agent.conf:ro
+      - /var/log:/var/log:ro
+      - onprem_mtls:/etc/las/mtls:ro
+    networks:
+      - las-onprem-net
+
+  # ============================================================
+  # On-prem Control Gateway (optional):
+  # connects outbound to SaaS for licensing/updates and auto-tickets.
+  # ============================================================
+  las-control-gateway:
+    build:
+      context: ../agents
+      dockerfile: Dockerfile.gateway
+    restart: unless-stopped
+    environment:
+      LAS_CONFIG: /etc/las/gateway.conf
+    volumes:
+      - ./onprem-control-gateway.conf:/etc/las/gateway.conf:ro
+      - onprem_mtls:/etc/las/mtls:rw
+    networks:
+      - las-onprem-net
+    profiles:
+      - edge
+
+networks:
+  las-onprem-net:
+    driver: bridge
+
+volumes:
+  pg_0_data:
+  pg_1_data:
+  redis_0_data:
+  redis_1_data:
+  redis_2_data:
+  onprem_mtls:
+  onprem_logs:
+  onprem_uploads:
+  onprem_npm_data:
+  onprem_npm_letsencrypt:
+

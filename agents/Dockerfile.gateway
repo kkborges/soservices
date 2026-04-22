@@ -1,0 +1,9 @@
+FROM python:3.12-slim
+
+WORKDIR /opt/las
+
+COPY shared/las_gateway.py /opt/las/las_gateway.py
+
+# Default: run as root (gateway may bind privileged ports like 514/6514 on-prem).
+ENTRYPOINT ["python", "/opt/las/las_gateway.py"]
+
