@@ -98,3 +98,99 @@ services:
     depends_on:
       - las-api-a
       - las-api-b
+
+  las-celery-worker:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: las-celery-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: celery -A app.workers.celery_app worker --queues=default,alerts,baseline,collector --loglevel=info --concurrency=4
+    environment:
+      POSTGRES_HOST: pgpool
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: las
+      POSTGRES_USER: las
+      REDIS_HOST: redis-haproxy
+      REDIS_PORT: 6379
+      REDIS_SENTINELS: redis-sentinel-0:26379,redis-sentinel-1:26379,redis-sentinel-2:26379
+      REDIS_MASTER_NAME: lasmaster
+      HA_MODE: active-active
+      API_CLUSTER_EXPECTED_REPLICAS: 2
+      API_INSTANCE_ID: worker-default
+      POSTGRES_HA_MODE: pgpool-repmgr
+      REDIS_HA_MODE: sentinel
+      MTLS_STORAGE_DIR: /app/runtime/mtls
+    networks:
+      - las-net
+    volumes:
+      - ../runtime/mtls:/app/runtime/mtls
+    depends_on:
+      - las-api-a
+      - las-api-b
+
+  las-celery-synthetic:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: las-celery-synthetic
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: celery -A app.workers.celery_app worker --queues=synthetic --loglevel=info --concurrency=10
+    environment:
+      POSTGRES_HOST: pgpool
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: las
+      POSTGRES_USER: las
+      REDIS_HOST: redis-haproxy
+      REDIS_PORT: 6379
+      REDIS_SENTINELS: redis-sentinel-0:26379,redis-sentinel-1:26379,redis-sentinel-2:26379
+      REDIS_MASTER_NAME: lasmaster
+      HA_MODE: active-active
+      API_CLUSTER_EXPECTED_REPLICAS: 2
+      API_INSTANCE_ID: worker-synthetic
+      POSTGRES_HA_MODE: pgpool-repmgr
+      REDIS_HA_MODE: sentinel
+      MTLS_STORAGE_DIR: /app/runtime/mtls
+    networks:
+      - las-net
+    volumes:
+      - ../runtime/mtls:/app/runtime/mtls
+    depends_on:
+      - las-api-a
+      - las-api-b
+
+  las-celery-beat:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: las-celery-beat
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    environment:
+      POSTGRES_HOST: pgpool
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: las
+      POSTGRES_USER: las
+      REDIS_HOST: redis-haproxy
+      REDIS_PORT: 6379
+      REDIS_SENTINELS: redis-sentinel-0:26379,redis-sentinel-1:26379,redis-sentinel-2:26379
+      REDIS_MASTER_NAME: lasmaster
+      HA_MODE: active-active
+      API_CLUSTER_EXPECTED_REPLICAS: 2
+      API_INSTANCE_ID: beat
+      POSTGRES_HA_MODE: pgpool-repmgr
+      REDIS_HA_MODE: sentinel
+      MTLS_STORAGE_DIR: /app/runtime/mtls
+    networks:
+      - las-net
+    volumes:
+      - ../runtime/mtls:/app/runtime/mtls
+    depends_on:
+      - las-api-a
+      - las-api-b
