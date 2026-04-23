@@ -27,7 +27,8 @@ from urllib.parse import unquote, urlparse
 
 
 CONFIG_PATH = Path(os.getenv("LAS_CONFIG") or "/etc/las/gateway.conf")
-GATEWAY_VERSION = "4.1.3"
+# Keep in sync with backend/app/api/v1/endpoints/agents.py COMPONENT_LATEST_VERSION["gateway"]
+GATEWAY_VERSION = "4.1.4"
 LOG = logging.getLogger("las-gateway")
 STATE: dict[str, Any] = {
     "logs": [],
@@ -598,6 +599,199 @@ def run_snmp_get_task(command: dict) -> dict:
     }
 
 
+def _safe_metric_key(raw: str) -> str:
+    text = "".join(ch if ch.isalnum() or ch in {"_", ".", "-"} else "_" for ch in str(raw or ""))
+    text = text.strip("._-")[:80]
+    return text or "metric"
+
+
+def _extract_custom_queries(cfg: dict) -> list[dict]:
+    # Accept a few aliases to minimize friction in the UI JSON.
+    raw = cfg.get("custom_queries")
+    if raw is None:
+        raw = cfg.get("queries")
+    if raw is None:
+        raw = cfg.get("customQueries")
+    if not isinstance(raw, list):
+        return []
+    normalized: list[dict] = []
+    for item in raw[:20]:
+        if not isinstance(item, dict):
+            continue
+        query = str(item.get("query") or item.get("sql") or "").strip()
+        if not query:
+            continue
+        name = _safe_metric_key(item.get("name") or item.get("metric") or f"query_{len(normalized) + 1}")
+        normalized.append({"name": name, "query": query})
+    return normalized
+
+
+def run_extension_collect_task(command: dict) -> dict:
+    """Execute an extension instance inside the customer network (gateway-side)."""
+    slug = str(command.get("extension_slug") or "").strip()
+    instance_id = str(command.get("instance_id") or "").strip()
+    cfg = command.get("config") or {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    if not slug:
+        raise RuntimeError("extension_slug is required")
+
+    if slug in {"postgresql", "postgres"}:
+        return _collect_postgresql_extension("postgresql", instance_id, cfg)
+    if slug in {"mysql", "mariadb"}:
+        return _collect_mysql_extension("mysql", instance_id, cfg)
+    if slug in {"redis"}:
+        return _collect_redis_extension("redis", instance_id, cfg)
+
+    raise RuntimeError(f"Extensao nao suportada no gateway ainda: {slug}")
+
+
+def _collect_postgresql_extension(source: str, instance_id: str, cfg: dict) -> dict:
+    import asyncio
+
+    async def _run() -> dict:
+        import asyncpg
+
+        host = cfg.get("host") or "localhost"
+        port = int(cfg.get("port") or 5432)
+        user = cfg.get("user") or "postgres"
+        password = cfg.get("password") or ""
+        database = cfg.get("database") or "postgres"
+        timeout_s = max(3, int(cfg.get("timeout_seconds") or 10))
+        conn = await asyncpg.connect(
+            host=host,
+            port=port,
+            user=user,
+            password=password,
+            database=database,
+            timeout=timeout_s,
+        )
+        metrics: dict[str, float] = {}
+        try:
+            # Best-effort standard metrics (some environments may restrict these views).
+            try:
+                metrics["active_connections"] = float(
+                    await conn.fetchval("SELECT count(*) FROM pg_stat_activity WHERE state = 'active'")
+                )
+            except Exception:
+                pass
+            try:
+                cache_hit = await conn.fetchval(
+                    """
+                    SELECT sum(blks_hit) * 100.0 / nullif(sum(blks_hit + blks_read), 0)
+                    FROM pg_stat_database
+                    """
+                )
+                if cache_hit is not None:
+                    metrics["cache_hit_ratio"] = float(round(float(cache_hit), 2))
+            except Exception:
+                pass
+
+            for item in _extract_custom_queries(cfg):
+                key = f"query.{item['name']}"
+                try:
+                    value = await conn.fetchval(item["query"])
+                    if isinstance(value, bool):
+                        metrics[key] = 1.0 if value else 0.0
+                    elif isinstance(value, (int, float)):
+                        metrics[key] = float(value)
+                    elif value is not None:
+                        metrics[key] = float(str(value).strip())
+                except Exception:
+                    continue
+        finally:
+            await conn.close()
+        return metrics
+
+    metrics = asyncio.run(_run())
+    return {"extension_slug": source, "instance_id": instance_id, "metrics": metrics}
+
+
+def _collect_mysql_extension(source: str, instance_id: str, cfg: dict) -> dict:
+    import asyncio
+
+    async def _run() -> dict:
+        import aiomysql
+
+        host = cfg.get("host") or "localhost"
+        port = int(cfg.get("port") or 3306)
+        user = cfg.get("user") or "root"
+        password = cfg.get("password") or ""
+        database = cfg.get("database") or "information_schema"
+        timeout_s = max(3, int(cfg.get("timeout_seconds") or 10))
+        conn = await aiomysql.connect(
+            host=host,
+            port=port,
+            user=user,
+            password=password,
+            db=database,
+            connect_timeout=timeout_s,
+        )
+        metrics: dict[str, float] = {}
+        try:
+            try:
+                async with conn.cursor() as cur:
+                    await cur.execute("SHOW GLOBAL STATUS WHERE Variable_name IN ('Threads_connected','Uptime')")
+                    rows = await cur.fetchall()
+                status = {r[0]: r[1] for r in rows}
+                if status.get("Threads_connected") is not None:
+                    metrics["threads_connected"] = float(status["Threads_connected"])
+                if status.get("Uptime") is not None:
+                    metrics["uptime_s"] = float(status["Uptime"])
+            except Exception:
+                pass
+
+            for item in _extract_custom_queries(cfg):
+                key = f"query.{item['name']}"
+                try:
+                    async with conn.cursor() as cur:
+                        await cur.execute(item["query"])
+                        row = await cur.fetchone()
+                    value = row[0] if row else None
+                    if isinstance(value, bool):
+                        metrics[key] = 1.0 if value else 0.0
+                    elif isinstance(value, (int, float)):
+                        metrics[key] = float(value)
+                    elif value is not None:
+                        metrics[key] = float(str(value).strip())
+                except Exception:
+                    continue
+        finally:
+            conn.close()
+        return metrics
+
+    metrics = asyncio.run(_run())
+    return {"extension_slug": source, "instance_id": instance_id, "metrics": metrics}
+
+
+def _collect_redis_extension(source: str, instance_id: str, cfg: dict) -> dict:
+    import socket
+
+    host = str(cfg.get("host") or "localhost")
+    port = int(cfg.get("port") or 6379)
+    password = str(cfg.get("password") or "")
+    timeout_s = max(2, int(cfg.get("timeout_seconds") or 5))
+
+    metrics: dict[str, float] = {}
+    with socket.create_connection((host, port), timeout=timeout_s) as sock:
+        sock.settimeout(timeout_s)
+        if password:
+            sock.sendall(f"*2\r\n$4\r\nAUTH\r\n${len(password)}\r\n{password}\r\n".encode("utf-8"))
+            _ = sock.recv(4096)
+        sock.sendall(b"*2\r\n$4\r\nINFO\r\n$11\r\nreplication\r\n")
+        data = sock.recv(65535).decode("utf-8", errors="replace")
+        for line in data.splitlines():
+            if line.startswith("connected_slaves:"):
+                try:
+                    metrics["connected_slaves"] = float(line.split(":", 1)[1].strip())
+                except Exception:
+                    pass
+            if line.startswith("role:"):
+                metrics["is_master"] = 1.0 if line.split(":", 1)[1].strip() == "master" else 0.0
+
+    return {"extension_slug": source, "instance_id": instance_id, "metrics": metrics}
+
+
 def run_gateway_task(task: dict) -> dict:
     task_type = task.get("type")
     command = task.get("command") or {}
@@ -607,11 +801,15 @@ def run_gateway_task(task: dict) -> dict:
         return run_snmp_refresh_task(command)
     if task_type == "snmp_get":
         return run_snmp_get_task(command)
+    if task_type == "extension_collect":
+        return run_extension_collect_task(command)
     raise RuntimeError(f"Tipo de task nao suportado pelo gateway: {task_type}")
 
 
 def gateway_task_loop(config: configparser.ConfigParser) -> None:
-    if not config.getboolean("features", "network_discovery", fallback=True):
+    # Gateways can execute multiple task types (discovery/SNMP/extensions). Avoid coupling this loop
+    # to a single flag (network_discovery), otherwise extensions never run.
+    if not config.getboolean("features", "task_executor", fallback=True):
         return
     base_url = config.get("mtls", "platform_url", fallback=get_platform_url(config)).rstrip("/")
     token = get_gateway_token(config)

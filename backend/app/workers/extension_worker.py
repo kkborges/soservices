@@ -159,6 +159,32 @@ def _get_extension_handler(slug: str):
     return handlers.get(slug)
 
 
+def _safe_metric_key(raw: str) -> str:
+    text = "".join(ch if ch.isalnum() or ch in {"_", ".", "-"} else "_" for ch in str(raw or ""))
+    text = text.strip("._-")[:80]
+    return text or "metric"
+
+
+def _extract_custom_queries(cfg: dict) -> list[dict]:
+    raw = cfg.get("custom_queries")
+    if raw is None:
+        raw = cfg.get("queries")
+    if raw is None:
+        raw = cfg.get("customQueries")
+    if not isinstance(raw, list):
+        return []
+    normalized: list[dict] = []
+    for item in raw[:20]:
+        if not isinstance(item, dict):
+            continue
+        query = str(item.get("query") or item.get("sql") or "").strip()
+        if not query:
+            continue
+        name = _safe_metric_key(item.get("name") or item.get("metric") or f"query_{len(normalized) + 1}")
+        normalized.append({"name": name, "query": query})
+    return normalized
+
+
 async def _collect_postgresql(config):
     """Collect PostgreSQL metrics via psycopg2."""
     import asyncpg
@@ -202,6 +228,23 @@ async def _collect_postgresql(config):
             "databases": [{"name": r["datname"], "size_bytes": r["size"]} for r in db_sizes],
         }
 
+        # Custom queries (best-effort): each query should return a single numeric/bool value.
+        for item in _extract_custom_queries(cfg):
+            try:
+                value = await conn.fetchval(item["query"])
+            except Exception:
+                continue
+            key = f"query.{item['name']}"
+            if isinstance(value, bool):
+                metrics[key] = 1.0 if value else 0.0
+            elif isinstance(value, (int, float)):
+                metrics[key] = float(value)
+            elif value is not None:
+                try:
+                    metrics[key] = float(str(value).strip())
+                except Exception:
+                    continue
+
         await _store_extension_metrics(config.id, config.tenant_id, "postgresql", metrics)
         return metrics
     finally:
@@ -234,6 +277,26 @@ async def _collect_mysql(config):
                 max(int(status.get("Innodb_buffer_pool_read_requests", 1)), 1)), 2
             ),
         }
+
+        for item in _extract_custom_queries(cfg):
+            key = f"query.{item['name']}"
+            try:
+                async with conn.cursor() as cur:
+                    await cur.execute(item["query"])
+                    row = await cur.fetchone()
+                value = row[0] if row else None
+            except Exception:
+                continue
+            if isinstance(value, bool):
+                metrics[key] = 1.0 if value else 0.0
+            elif isinstance(value, (int, float)):
+                metrics[key] = float(value)
+            elif value is not None:
+                try:
+                    metrics[key] = float(str(value).strip())
+                except Exception:
+                    continue
+
         await _store_extension_metrics(config.id, config.tenant_id, "mysql", metrics)
         return metrics
     finally:

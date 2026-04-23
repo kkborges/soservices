@@ -96,7 +96,7 @@ AGENT_ARTIFACTS = {
 SETUP_OVERLAY_MAGIC = b"LASSETUPCFG1"
 COMPONENT_LATEST_VERSION = {
     "agent": "4.1.1",
-    "gateway": "4.1.3",
+    "gateway": "4.1.4",
 }
 COMPONENT_ARTIFACTS = {
     ("agent", "linux"): "linux-agent.bin",

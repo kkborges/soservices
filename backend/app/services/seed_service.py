@@ -201,6 +201,71 @@ async def ensure_initial_data(db: AsyncSession) -> None:
         )
 
     catalog = [
+        # Databases
+        {
+            "slug": "postgresql",
+            "name": "PostgreSQL",
+            "description": "Coleta metricas e permite queries personalizadas (via gateway) para gerar datapoints e dashboards.",
+            "category": "database",
+            "version": "1.0.0",
+            "author": "LAS",
+            "metrics": ["postgresql.active_connections", "postgresql.cache_hit_ratio", "postgresql.query.*"],
+        },
+        {
+            "slug": "mysql",
+            "name": "MySQL",
+            "description": "Coleta metricas e permite queries personalizadas (via gateway) para gerar datapoints e dashboards.",
+            "category": "database",
+            "version": "1.0.0",
+            "author": "LAS",
+            "metrics": ["mysql.threads_connected", "mysql.uptime_s", "mysql.query.*"],
+        },
+        {
+            "slug": "sqlserver",
+            "name": "SQL Server",
+            "description": "Coleta metricas basicas e queries personalizadas (via gateway).",
+            "category": "database",
+            "version": "1.0.0",
+            "author": "LAS",
+            "metrics": ["sqlserver.connections", "sqlserver.query.*"],
+        },
+        {
+            "slug": "oracle",
+            "name": "Oracle Database",
+            "description": "Coleta metricas basicas e queries personalizadas (via gateway).",
+            "category": "database",
+            "version": "1.0.0",
+            "author": "LAS",
+            "metrics": ["oracle.sessions.active", "oracle.query.*"],
+        },
+        {
+            "slug": "redis",
+            "name": "Redis",
+            "description": "Coleta metricas e estado do Redis (via gateway).",
+            "category": "database",
+            "version": "1.0.0",
+            "author": "LAS",
+            "metrics": ["redis.is_master", "redis.connected_slaves"],
+        },
+        {
+            "slug": "mongodb",
+            "name": "MongoDB",
+            "description": "Coleta metricas basicas do MongoDB (via gateway).",
+            "category": "database",
+            "version": "1.0.0",
+            "author": "LAS",
+            "metrics": ["mongodb.connections", "mongodb.query.*"],
+        },
+        {
+            "slug": "elasticsearch",
+            "name": "Elasticsearch",
+            "description": "Coleta status e metricas basicas do cluster Elasticsearch (via gateway).",
+            "category": "database",
+            "version": "1.0.0",
+            "author": "LAS",
+            "metrics": ["elasticsearch.status", "elasticsearch.nodes", "elasticsearch.query.*"],
+        },
+        # Integrations / notifications
         {
             "slug": "kubernetes-monitoring",
             "name": "Kubernetes Monitoring",
