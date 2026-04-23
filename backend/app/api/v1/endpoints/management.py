@@ -192,6 +192,13 @@ async def admin_overview(
     synthetic_counts = dict(
         (await db.execute(select(SyntheticTest.tenant_id, func.count(SyntheticTest.id)).group_by(SyntheticTest.tenant_id))).all()
     )
+    extension_metric_rows = (
+        await db.execute(
+            select(ExtensionConfig.tenant_id, func.sum(ExtensionConfig.metrics_collected))
+            .group_by(ExtensionConfig.tenant_id)
+        )
+    ).all()
+    extension_metric_units = {row[0]: int((row[1] or 0) // 100) for row in extension_metric_rows}
 
     tenant_items = []
     for tenant in tenants:
@@ -203,11 +210,13 @@ async def admin_overview(
             "network_assets": int(asset_counts.get(tenant.id, 0)),
             "users": int(user_counts.get(tenant.id, 0)),
             "synthetics": int(synthetic_counts.get(tenant.id, 0)),
+            "extension_units": int(extension_metric_units.get(tenant.id, 0)),
         }
         consumption["weighted_units"] = (
             consumption["hosts"] * 2
             + consumption["network_assets"]
             + consumption["synthetics"]
+            + consumption["extension_units"]
         )
         tenant_items.append(
             {
