@@ -1,21 +1,12 @@
 """
 Alert Worker — Evaluates alert rules and dispatches notifications.
 """
-import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from app.workers.celery_app import celery_app
+from app.workers.async_runner import run_async
 
 logger = logging.getLogger(__name__)
-
-
-def run_async(coro):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
 
 
 @celery_app.task(name="app.workers.alert_worker.evaluate_alert_rules")

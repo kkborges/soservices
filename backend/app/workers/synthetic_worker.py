@@ -12,6 +12,7 @@ import httpx
 import re
 from urllib.parse import urlparse, urljoin
 from app.workers.celery_app import celery_app
+from app.workers.async_runner import run_async
 
 logger = logging.getLogger(__name__)
 
@@ -121,15 +122,6 @@ async def _fetch_with_ttfb(
         ttfb_ms = float(timings.get("ttfb_ms") or total_ms)
         timings["download_ms"] = round(max(0.0, total_ms - ttfb_ms), 2)
         return resp, timings, bytes(body_prefix), total_bytes
-
-
-def run_async(coro):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
 
 
 @celery_app.task(name="app.workers.synthetic_worker.dispatch_due_tests")

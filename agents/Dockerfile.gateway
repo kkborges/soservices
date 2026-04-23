@@ -4,6 +4,10 @@ WORKDIR /opt/las
 
 COPY shared/las_gateway.py /opt/las/las_gateway.py
 
+# Extension dependencies (DB collectors, HTTP collectors).
+# Keep this image lightweight but functional for gateway-executed extensions.
+RUN pip install --no-cache-dir --upgrade pip \
+  && pip install --no-cache-dir asyncpg==0.30.0 aiomysql==0.2.0 httpx==0.27.2
+
 # Default: run as root (gateway may bind privileged ports like 514/6514 on-prem).
 ENTRYPOINT ["python", "/opt/las/las_gateway.py"]
-

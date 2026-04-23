@@ -2,6 +2,7 @@
 """Portable LAS gateway that receives and forwards real logs/metrics/traces."""
 from __future__ import annotations
 
+import asyncio
 import configparser
 import hashlib
 import ipaddress

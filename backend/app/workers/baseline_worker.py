@@ -2,7 +2,6 @@
 Baseline Worker — Computes rolling statistical baselines for all monitored metrics.
 Runs every 5 minutes via Celery Beat.
 """
-import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any
@@ -10,18 +9,9 @@ import numpy as np
 from sqlalchemy import select, func, text
 from app.workers.celery_app import celery_app
 from app.core.config import settings
+from app.workers.async_runner import run_async
 
 logger = logging.getLogger(__name__)
-
-
-def run_async(coro):
-    """Run async coroutine from sync Celery task."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
 
 
 @celery_app.task(bind=True, name="app.workers.baseline_worker.update_all_baselines",

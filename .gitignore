@@ -46,6 +46,7 @@ backend/build/
 dist/*.toc
 dist/*.log
 dist/*.pkg
+releases/
 
 # .NET
 **/bin/

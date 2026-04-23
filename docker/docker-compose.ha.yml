@@ -141,7 +141,7 @@ services:
       - .env
     command: celery -A app.workers.celery_app worker --queues=synthetic --loglevel=info --concurrency=10
     environment:
-      POSTGRES_HOST: pgpool
+      POSTGRES_HOST: pg-0
       POSTGRES_PORT: 5432
       POSTGRES_DB: las
       POSTGRES_USER: las
@@ -173,7 +173,7 @@ services:
       - .env
     command: celery -A app.workers.celery_app beat --loglevel=info
     environment:
-      POSTGRES_HOST: pgpool
+      POSTGRES_HOST: pg-0
       POSTGRES_PORT: 5432
       POSTGRES_DB: las
       POSTGRES_USER: las

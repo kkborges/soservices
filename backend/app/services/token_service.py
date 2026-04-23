@@ -1486,13 +1486,47 @@ elif command -v apk >/dev/null 2>&1; then
   apk add --no-cache python3 py3-pip curl ca-certificates
 fi
 
-curl -fsSL "$PLATFORM_URL/api/v1/agents/artifacts/linux-gateway.bin" \
+HOSTNAME_VALUE=$(hostname -f 2>/dev/null || hostname)
+PUBLIC_ENDPOINT="https://${{HOSTNAME_VALUE}}:9443"
+
+echo "[LAS Gateway] Provisionando certificados mTLS..."
+BOOTSTRAP_URL="$MTLS_PLATFORM_URL/api/v1/agents/bootstrap/mtls"
+set +e
+RESPONSE=$(curl -kfsSL --get "$BOOTSTRAP_URL" \
+  -H "Authorization: Bearer $GATEWAY_TOKEN" \
+  --data-urlencode "hostname=${{HOSTNAME_VALUE}}" \
+  --data-urlencode "public_endpoint=${{PUBLIC_ENDPOINT}}")
+CURL_CODE="$?"
+set -e
+if [ "$CURL_CODE" != "0" ] || [ -z "$RESPONSE" ]; then
+  echo "[LAS Gateway] Falha ao baixar bundle mTLS. Verifique DNS/NAT/Firewall e acesso a $MTLS_PLATFORM_URL"
+  exit 2
+fi
+export LAS_MTLS_RESPONSE="$RESPONSE"
+python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+payload = json.loads(os.environ["LAS_MTLS_RESPONSE"])
+base = Path("/etc/las")
+base.mkdir(parents=True, exist_ok=True)
+(base / "mtls-ca.pem").write_text(payload["ca_pem"], encoding="ascii")
+(base / "mtls-client.pem").write_text(payload["client_cert_pem"], encoding="ascii")
+(base / "mtls-client-key.pem").write_text(payload["client_key_pem"], encoding="ascii")
+(base / "mtls-server.pem").write_text(payload["server_cert_pem"], encoding="ascii")
+(base / "mtls-server-key.pem").write_text(payload["server_key_pem"], encoding="ascii")
+PY
+
+echo "[LAS Gateway] Baixando payload via mTLS edge..."
+curl -fL --retry 3 --retry-connrefused --progress-bar \
+  --cacert "/etc/las/mtls-ca.pem" \
+  --cert "/etc/las/mtls-client.pem" \
+  --key "/etc/las/mtls-client-key.pem" \
+  "$MTLS_PLATFORM_URL/api/v1/agents/artifacts/linux-gateway.bin" \
   -H "Authorization: Bearer $GATEWAY_TOKEN" \
   -o "$INSTALL_DIR/las-gateway"
 chmod +x "$INSTALL_DIR/las-gateway"
-
-HOSTNAME_VALUE=$(hostname -f 2>/dev/null || hostname)
-PUBLIC_ENDPOINT="https://${{HOSTNAME_VALUE}}:9443"
 
 cat > "$CONFIG_DIR/gateway.conf" <<CONF
 [las]
@@ -1558,36 +1592,6 @@ udp_port = {syslog_udp_port}
 tcp_port = {syslog_tcp_port}
 tls_port = {syslog_tls_port}
 CONF
-
-BOOTSTRAP_URL="$PLATFORM_URL/api/v1/agents/bootstrap/mtls"
-set +e
-RESPONSE=$(curl -fsSL --get "$BOOTSTRAP_URL" \
-  -H "Authorization: Bearer $GATEWAY_TOKEN" \
-  --data-urlencode "hostname=${{HOSTNAME_VALUE}}" \
-  --data-urlencode "public_endpoint=${{PUBLIC_ENDPOINT}}")
-CURL_CODE="$?"
-set -e
-if [ "$CURL_CODE" != "0" ] || [ -z "$RESPONSE" ]; then
-  echo "[LAS Gateway] Aviso: falha TLS ao baixar bundle mTLS. Tentando bootstrap inseguro (somente nesta etapa)."
-  RESPONSE=$(curl -kfsSL --get "$BOOTSTRAP_URL" \
-    -H "Authorization: Bearer $GATEWAY_TOKEN" \
-    --data-urlencode "hostname=${{HOSTNAME_VALUE}}" \
-    --data-urlencode "public_endpoint=${{PUBLIC_ENDPOINT}}")
-fi
-export LAS_MTLS_RESPONSE="$RESPONSE"
-python3 - <<'PY'
-import json
-import os
-from pathlib import Path
-
-payload = json.loads(os.environ["LAS_MTLS_RESPONSE"])
-base = Path("/etc/las")
-(base / "mtls-ca.pem").write_text(payload["ca_pem"], encoding="ascii")
-(base / "mtls-client.pem").write_text(payload["client_cert_pem"], encoding="ascii")
-(base / "mtls-client-key.pem").write_text(payload["client_key_pem"], encoding="ascii")
-(base / "mtls-server.pem").write_text(payload["server_cert_pem"], encoding="ascii")
-(base / "mtls-server-key.pem").write_text(payload["server_key_pem"], encoding="ascii")
-PY
 
 cat > /etc/systemd/system/$SERVICE_NAME.service <<EOF
 [Unit]

@@ -131,28 +131,19 @@ def tenant_license_codes(tenant: Tenant) -> set[str]:
     settings = tenant.settings or {}
     license_cfg = settings.get("licenses") or features.get("licenses") or {}
 
-    enabled: set[str] = set()
+    # Base entitlements come from the tenant plan. Explicit `licenses` config acts as an override
+    # (allow-list) for customer-by-customer licensing.
+    plan = str(tenant.plan or "trial").replace("PlanType.", "")
+    enabled: set[str] = set(PLAN_LICENSES.get(plan, PLAN_LICENSES["trial"]))
+
+    # Optional explicit override (typically set by platform admin).
+    explicit: set[str] = set()
     if isinstance(license_cfg, dict):
-        enabled.update(str(code) for code, active in license_cfg.items() if active)
+        explicit.update(str(code) for code, active in license_cfg.items() if active)
     elif isinstance(license_cfg, list):
-        enabled.update(str(code) for code in license_cfg)
-
-    for feature, code in {
-        "otel": "complete",
-        "logs": "snmp_logs",
-        "network_discovery": "network_discovery",
-        "snmp": "snmp_logs",
-        "ids": "sec",
-        "security": "sec",
-        "rum": "user_experience",
-        "integrations": "integrations",
-    }.items():
-        if features.get(feature):
-            enabled.add(code)
-
-    if not enabled:
-        plan = str(tenant.plan or "trial").replace("PlanType.", "")
-        enabled.update(PLAN_LICENSES.get(plan, PLAN_LICENSES["trial"]))
+        explicit.update(str(code) for code in license_cfg)
+    if explicit:
+        enabled = explicit
 
     enabled.add("infra")
     enabled.add("included")

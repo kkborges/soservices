@@ -2,22 +2,13 @@
 AI Worker — Autonomous anomaly detection and AI analysis.
 Compares current metrics against baselines; generates alerts with AI insights.
 """
-import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from app.workers.celery_app import celery_app
 from app.core.config import settings
+from app.workers.async_runner import run_async
 
 logger = logging.getLogger(__name__)
-
-
-def run_async(coro):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
 
 
 @celery_app.task(bind=True, name="app.workers.ai_worker.analyze_anomalies", max_retries=2)
