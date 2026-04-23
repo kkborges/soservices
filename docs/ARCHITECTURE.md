@@ -710,10 +710,10 @@ Scheduled Task (every minute)
 
 ## 📖 Documentation Links
 
-- [CONTRIBUTING.md](CONTRIBUTING.md) - Development guidelines
-- [TESTING_GUIDE.md](tests/TESTING_GUIDE.md) - Test strategies
-- [DEVELOPMENT.md](docs/DEVELOPMENT.md) - Local setup
-- [DEPLOYMENT.md](docs/DEPLOYMENT-CLIENTE.md) - Production deployment
+- [CONTRIBUTING.md](../CONTRIBUTING.md) - Development guidelines
+- [TESTING_GUIDE.md](../tests/TESTING_GUIDE.md) - Test strategies
+- [QUICK_START.md](../QUICK_START.md) - Local setup
+- [DEPLOYMENT-CLIENTE.md](./DEPLOYMENT-CLIENTE.md) - Production deployment
 
 ---
 
