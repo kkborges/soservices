@@ -9,9 +9,119 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional
 import httpx
+import re
+from urllib.parse import urlparse, urljoin
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+
+RESOURCE_URL_RE = re.compile(
+    r"""(?is)(?:src|href)\s*=\s*["']([^"']+)["']"""
+)
+
+
+def _extract_resource_urls(html: str, base_url: str, limit: int = 30) -> list[str]:
+    if not html or not base_url:
+        return []
+    urls: list[str] = []
+    for match in RESOURCE_URL_RE.findall(html):
+        raw = (match or "").strip()
+        if not raw or raw.startswith(("data:", "javascript:", "#")):
+            continue
+        absolute = urljoin(base_url, raw)
+        if absolute.startswith(("http://", "https://")):
+            urls.append(absolute)
+        if len(urls) >= limit:
+            break
+    # de-dup while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for item in urls:
+        if item in seen:
+            continue
+        seen.add(item)
+        unique.append(item)
+    return unique
+
+
+async def _preflight_dns_connect_tls(url: str, timeout_s: int) -> tuple[dict[str, Any], str | None]:
+    """Best-effort network timings. This is not the same socket used by httpx."""
+    parsed = urlparse(url)
+    host = parsed.hostname
+    if not host:
+        return {}, None
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    timings: dict[str, Any] = {}
+
+    import time
+
+    loop = asyncio.get_running_loop()
+    dns_start = time.monotonic()
+    try:
+        addrs = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except Exception:
+        return {}, None
+    dns_ms = (time.monotonic() - dns_start) * 1000
+    timings["dns_ms"] = round(dns_ms, 2)
+    ip = addrs[0][4][0] if addrs and addrs[0] and addrs[0][4] else None
+    if not ip:
+        return timings, None
+
+    connect_start = time.monotonic()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(max(1, int(timeout_s)))
+    try:
+        sock.connect((ip, port))
+        timings["connect_ms"] = round((time.monotonic() - connect_start) * 1000, 2)
+        if parsed.scheme == "https":
+            tls_start = time.monotonic()
+            ctx = ssl.create_default_context()
+            tls_sock = ctx.wrap_socket(sock, server_hostname=host)
+            tls_sock.do_handshake()
+            timings["tls_ms"] = round((time.monotonic() - tls_start) * 1000, 2)
+            tls_sock.close()
+        else:
+            sock.close()
+    except Exception:
+        try:
+            sock.close()
+        except Exception:
+            pass
+        return timings, ip
+    return timings, ip
+
+
+async def _fetch_with_ttfb(
+    client: httpx.AsyncClient,
+    *,
+    method: str,
+    url: str,
+    headers: dict,
+    body: bytes | None,
+    timeout_s: int,
+) -> tuple[httpx.Response, dict[str, Any], bytes, int]:
+    """Fetch URL streaming to measure TTFB + total bytes (best-effort)."""
+    import time
+
+    timings: dict[str, Any] = {}
+    total_bytes = 0
+    first_chunk: bytes | None = None
+    start = time.monotonic()
+    async with client.stream(method=method, url=url, headers=headers, content=body, timeout=timeout_s) as resp:
+        async for chunk in resp.aiter_bytes():
+            if first_chunk is None:
+                first_chunk = chunk
+                timings["ttfb_ms"] = round((time.monotonic() - start) * 1000, 2)
+            total_bytes += len(chunk or b"")
+            # keep only a snippet for UI / assertions
+            if first_chunk is not None and len(first_chunk) > 600:
+                first_chunk = first_chunk[:600]
+        total_ms = (time.monotonic() - start) * 1000
+        timings["total_ms"] = round(total_ms, 2)
+        ttfb_ms = float(timings.get("ttfb_ms") or total_ms)
+        timings["download_ms"] = round(max(0.0, total_ms - ttfb_ms), 2)
+        return resp, timings, first_chunk or b"", total_bytes
 
 
 def run_async(coro):
@@ -98,6 +208,7 @@ async def _run_http_check(test_id: str, check_type: str):
         )
 
         try:
+            preflight_timings, remote_ip = await _preflight_dns_connect_tls(test.url or "", test.timeout_seconds or 30)
             async with httpx.AsyncClient(
                 timeout=test.timeout_seconds,
                 follow_redirects=True,
@@ -110,20 +221,22 @@ async def _run_http_check(test_id: str, check_type: str):
                 elif test.auth_type == "api_key":
                     headers["X-API-Key"] = test.auth_value
 
-                import time
-                start = time.monotonic()
-                resp = await client.request(
+                resp, timing, snippet_bytes, total_bytes = await _fetch_with_ttfb(
+                    client,
                     method=test.method or "GET",
                     url=test.url,
                     headers=headers,
-                    content=test.body.encode() if test.body else None,
+                    body=test.body.encode() if test.body else None,
+                    timeout_s=int(test.timeout_seconds or 30),
                 )
-                elapsed_ms = (time.monotonic() - start) * 1000
+                elapsed_ms = float(timing.get("total_ms") or 0)
 
                 result.status_code = resp.status_code
                 result.response_time_ms = elapsed_ms
                 result.response_headers = dict(resp.headers)
-                result.response_body_snippet = resp.text[:500]
+                result.response_body_snippet = snippet_bytes.decode("utf-8", errors="replace")[:500]
+                result.timings = {**(preflight_timings or {}), **(timing or {}), "bytes": total_bytes}
+                result.remote_ip = remote_ip
 
                 # Run assertions for api_monitor
                 assertions_passed = 0
@@ -179,12 +292,48 @@ async def _run_http_check(test_id: str, check_type: str):
                 result.assertion_details = assertion_details
 
                 # Determine status
-                is_ok = resp.status_code < 400 and assertions_failed == 0
-                result.status = "up" if is_ok else "degraded" if assertions_failed > 0 else "down"
+                if resp.status_code >= 500:
+                    result.status = "down"
+                elif assertions_failed > 0:
+                    result.status = "degraded" if assertions_passed > 0 else "down"
+                else:
+                    result.status = "up" if resp.status_code < 400 else "degraded"
+
+                # Resource waterfall for HTML pages (URL monitor only; best-effort)
+                result.resources = []
+                content_type = (resp.headers.get("content-type") or "").lower()
+                if check_type == "url_monitor" and "text/html" in content_type and result.response_body_snippet:
+                    resources = _extract_resource_urls(result.response_body_snippet, test.url or "")
+                    resource_items = []
+                    for resource_url in resources[:20]:
+                        try:
+                            r_resp, r_timing, _, r_bytes = await _fetch_with_ttfb(
+                                client,
+                                method="GET",
+                                url=resource_url,
+                                headers={},
+                                body=None,
+                                timeout_s=min(10, max(3, int(test.timeout_seconds or 30))),
+                            )
+                            resource_items.append(
+                                {
+                                    "url": resource_url,
+                                    "status_code": r_resp.status_code,
+                                    "total_ms": r_timing.get("total_ms"),
+                                    "ttfb_ms": r_timing.get("ttfb_ms"),
+                                    "bytes": r_bytes,
+                                }
+                            )
+                        except Exception:
+                            continue
+                    result.resources = resource_items
 
         except httpx.TimeoutException:
             result.status = "down"
             result.error_message = "Timeout"
+        except ssl.SSLCertVerificationError as e:
+            result.status = "down"
+            result.error_message = f"SSL verification failed: {e}"
         except Exception as e:
             result.status = "down"
             result.error_message = str(e)
@@ -197,6 +346,25 @@ async def _run_http_check(test_id: str, check_type: str):
         test.last_response_ms = result.response_time_ms
 
         await db.commit()
+
+        # Update rolling stats (avg response + uptime based on recent history).
+        try:
+            from sqlalchemy import desc
+            rows = await db.execute(
+                select(SyntheticResult.status, SyntheticResult.response_time_ms)
+                .where(SyntheticResult.tenant_id == test.tenant_id, SyntheticResult.test_id == test.id)
+                .order_by(desc(SyntheticResult.timestamp))
+                .limit(100)
+            )
+            recent = rows.all()
+            if recent:
+                up_like = [r for r in recent if r[0] in {"up", "degraded"}]
+                test.uptime_pct = round((len(up_like) / max(len(recent), 1)) * 100, 2)
+                times = [float(r[1]) for r in up_like if r[1] is not None]
+                test.avg_response_ms = round(sum(times) / max(len(times), 1), 2) if times else None
+                await db.commit()
+        except Exception:
+            pass
 
         # Create alert if failed
         if result.status == "down":
@@ -384,7 +552,85 @@ async def _run_app_flow(test_id: str):
 @celery_app.task(name="app.workers.synthetic_worker.check_synthetic_alert")
 def _check_synthetic_alert(test_id: str):
     """Create alert if synthetic test is consistently failing."""
-    pass   # Implemented in alert_worker
+    return run_async(_check_synthetic_alert_async(test_id))
+
+
+async def _check_synthetic_alert_async(test_id: str) -> dict:
+    from app.db.base import AsyncSessionLocal
+    from app.models import Alert, SyntheticResult, SyntheticTest
+    from sqlalchemy import select, desc
+
+    async with AsyncSessionLocal() as db:
+        test = await db.get(SyntheticTest, test_id)
+        if not test:
+            return {"status": "missing"}
+
+        # Look at recent executions to decide if we should open/close an incident.
+        threshold = max(1, int(test.consecutive_failures_threshold or 2))
+        rows = await db.execute(
+            select(SyntheticResult)
+            .where(SyntheticResult.test_id == test.id, SyntheticResult.tenant_id == test.tenant_id)
+            .order_by(desc(SyntheticResult.timestamp))
+            .limit(max(10, threshold + 3))
+        )
+        recent = rows.scalars().all()
+
+        consecutive_down = 0
+        for item in recent:
+            if item.status == "down":
+                consecutive_down += 1
+            else:
+                break
+
+        active_alert_rows = await db.execute(
+            select(Alert)
+            .where(
+                Alert.tenant_id == test.tenant_id,
+                Alert.entity_type == "synthetic",
+                Alert.entity_id == test.id,
+                Alert.metric == "synthetic.availability",
+                Alert.status != "resolved",
+            )
+            .order_by(desc(Alert.triggered_at))
+            .limit(1)
+        )
+        active_alert = active_alert_rows.scalar_one_or_none()
+
+        now = datetime.now(timezone.utc)
+        if consecutive_down >= threshold and test.alert_on_failure:
+            if active_alert:
+                active_alert.trigger_count = int(active_alert.trigger_count or 1) + 1
+                active_alert.description = f"Teste sintetico em falha. Falhas consecutivas: {consecutive_down}/{threshold}."
+                active_alert.triggered_at = now
+            else:
+                alert = Alert(
+                    id=str(uuid.uuid4()),
+                    tenant_id=test.tenant_id,
+                    name=f"Synthetic DOWN: {test.name}",
+                    description=f"Teste sintetico em falha. Falhas consecutivas: {consecutive_down}/{threshold}.",
+                    severity="high" if consecutive_down >= max(3, threshold) else "medium",
+                    entity_type="synthetic",
+                    entity_id=test.id,
+                    entity_name=test.name,
+                    metric="synthetic.availability",
+                    observed_value=0,
+                    threshold_value=1,
+                    condition_op="lt",
+                    status="active",
+                    triggered_at=now,
+                )
+                db.add(alert)
+            await db.commit()
+            return {"status": "alert_open", "consecutive_down": consecutive_down}
+
+        # Resolve existing alert when recovered.
+        if active_alert and (test.last_status in {"up", "degraded"}):
+            active_alert.status = "resolved"
+            active_alert.resolved_at = now
+            await db.commit()
+            return {"status": "alert_resolved"}
+
+        return {"status": "no_action", "consecutive_down": consecutive_down}
 
 
 def _compare(actual, op: str, expected) -> bool:

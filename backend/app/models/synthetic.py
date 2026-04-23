@@ -96,6 +96,15 @@ class SyntheticResult(Base):
     response_body_snippet = Column(Text)   # first 500 chars
     error_message = Column(Text)
 
+    # Advanced timings and resource waterfall (best-effort).
+    # timings example:
+    # {"dns_ms":12,"connect_ms":18,"tls_ms":44,"ttfb_ms":120,"download_ms":30,"total_ms":150}
+    timings = Column(JSON, default=dict)
+    # resources example:
+    # [{"url":"https://.../app.css","total_ms":24,"status_code":200,"bytes":1234}, ...]
+    resources = Column(JSON, default=list)
+    remote_ip = Column(String(100))
+
     # Playwright steps (for app_flow)
     steps_total = Column(Integer)
     steps_passed = Column(Integer)

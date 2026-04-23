@@ -1191,6 +1191,37 @@ async def get_synthetic_detail(
             .limit(100)
         )
     ).scalars().all()
+
+    # Baselines (best-effort) computed from last successful runs.
+    response_times = [float(r.response_time_ms) for r in results if r.status in {"up", "degraded"} and r.response_time_ms]
+    response_times_sorted = sorted(response_times)
+    baseline = {}
+    if response_times_sorted:
+        mid = response_times_sorted[len(response_times_sorted) // 2]
+        p95_index = max(0, int(round(0.95 * (len(response_times_sorted) - 1))))
+        baseline = {
+            "count": len(response_times_sorted),
+            "p50_response_ms": round(float(mid), 2),
+            "p95_response_ms": round(float(response_times_sorted[p95_index]), 2),
+        }
+    # Timing baseline per phase
+    timing_keys = ["dns_ms", "connect_ms", "tls_ms", "ttfb_ms", "download_ms", "total_ms"]
+    timing_baseline = {}
+    for key in timing_keys:
+        values = []
+        for r in results:
+            t = r.timings or {}
+            if r.status not in {"up", "degraded"}:
+                continue
+            if isinstance(t, dict) and t.get(key) is not None:
+                try:
+                    values.append(float(t.get(key)))
+                except Exception:
+                    continue
+        if values:
+            values.sort()
+            idx = max(0, int(round(0.95 * (len(values) - 1))))
+            timing_baseline[f"p95_{key}"] = round(values[idx], 2)
     return {
         "test": {
             "id": test.id,
@@ -1214,6 +1245,8 @@ async def get_synthetic_detail(
             "uptime_pct": test.uptime_pct,
             "avg_response_ms": test.avg_response_ms,
         },
+        "baseline": baseline,
+        "timing_baseline": timing_baseline,
         "results": [
             {
                 "id": result.id,
@@ -1222,6 +1255,9 @@ async def get_synthetic_detail(
                 "status": result.status,
                 "response_time_ms": result.response_time_ms,
                 "status_code": result.status_code,
+                "remote_ip": result.remote_ip,
+                "timings": result.timings or {},
+                "resources": result.resources or [],
                 "ssl_valid": result.ssl_valid,
                 "ssl_expires_at": result.ssl_expires_at.isoformat() if result.ssl_expires_at else None,
                 "ssl_days_remaining": result.ssl_days_remaining,

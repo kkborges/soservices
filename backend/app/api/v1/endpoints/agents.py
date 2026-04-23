@@ -22,6 +22,7 @@ from typing import Optional, List
 from app.db.base import get_db
 from app.middleware.auth import get_current_user
 from app.services.gateway_routing import resolve_gateway_routes
+from app.services.extension_metrics_service import store_extension_metrics
 from app.services.license_service import (
     gateway_config_for_type,
     installer_options_payload,
@@ -668,9 +669,11 @@ async def bootstrap_mtls_bundle(
 
 @router.get("/gateway/tasks/next")
 async def next_gateway_task(
+    request: Request,
     authorization: Optional[str] = Header(None),
     db: AsyncSession = Depends(get_db),
 ):
+    require_mtls_request(request)
     machine_kind, gateway = await verify_machine_token_value(authorization, db)
     if machine_kind != "gateway":
         raise HTTPException(status_code=403, detail="Gateway token required")
@@ -679,7 +682,7 @@ async def next_gateway_task(
         .where(
             Task.tenant_id == gateway.tenant_id,
             Task.status == "pending",
-            Task.type.in_(["network_scan", "snmp_discovery", "snmp_get"]),
+            Task.type.in_(["network_scan", "snmp_discovery", "snmp_get", "extension_collect"]),
         )
         .order_by(Task.scheduled_at, Task.created_at)
         .limit(20)
@@ -714,9 +717,11 @@ async def next_gateway_task(
 async def gateway_task_result(
     task_id: str,
     payload: dict,
+    request: Request,
     authorization: Optional[str] = Header(None),
     db: AsyncSession = Depends(get_db),
 ):
+    require_mtls_request(request)
     machine_kind, gateway = await verify_machine_token_value(authorization, db)
     if machine_kind != "gateway":
         raise HTTPException(status_code=403, detail="Gateway token required")
@@ -752,6 +757,24 @@ async def gateway_task_result(
                 }
             ],
         )
+    elif task.type == "extension_collect":
+        # Gateway executed an extension inside the customer network; store metrics server-side.
+        instance_id = (task_result.get("command") or {}).get("instance_id") or (result_payload.get("instance_id") if isinstance(result_payload, dict) else None)
+        metrics = (result_payload.get("metrics") if isinstance(result_payload, dict) else None) or {}
+        error_message = payload.get("error") or result_payload.get("error") if isinstance(result_payload, dict) else None
+        try:
+            await store_extension_metrics(
+                db=db,
+                tenant_id=gateway.tenant_id,
+                instance_id=instance_id,
+                source=str((task_result.get("command") or {}).get("extension_slug") or (result_payload.get("extension_slug") if isinstance(result_payload, dict) else "extension")),
+                metrics=metrics,
+                status=status if status in {"completed", "failed"} else "completed",
+                error=error_message,
+            )
+        except Exception:
+            # Do not fail the task result persistence due to metric parsing issues.
+            pass
 
     task.status = status if status in {"completed", "failed", "cancelled"} else "completed"
     task.completed_at = datetime.now(timezone.utc)

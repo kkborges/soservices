@@ -1055,7 +1055,71 @@ async function renderSyntheticDetail(testId) {
   const data = await api(`/api/v1/synthetics/${testId}/detail`);
   const test = data.test || {};
   const results = data.results || [];
-  render(`<section class="grid"><article class="card"><div class="actions"><button id="back-synthetics" class="button ghost" type="button">Voltar</button><button id="run-synthetic-detail" class="button primary" type="button">Executar agora</button></div><h3>${esc(test.name)}</h3><p class="muted">${esc(test.description || "Sem descricao.")}</p><div class="detail-kpis">${metricTile("Tipo", esc(test.type))}${metricTile("Status", esc(test.last_status || "unknown"))}${metricTile("Ultima execucao", fmt(test.last_check))}${metricTile("Resposta", test.last_response_ms ? `${num(test.last_response_ms)} ms` : "-")}${metricTile("Uptime", `${num(test.uptime_pct)}%`)}</div><p><strong>URL:</strong> <span class="mono">${esc(test.url || "-")}</span></p></article><article class="card"><h3>Historico de execucoes</h3>${results.length ? table(["Quando", "Status", "HTTP", "Resposta", "SSL", "Assertions", "Steps", "Erro"], results.map((result) => [fmt(result.timestamp), status(result.status), esc(result.status_code || "-"), result.response_time_ms ? `${num(result.response_time_ms)} ms` : "-", result.ssl_days_remaining == null ? "-" : `${num(result.ssl_days_remaining)} dias`, `${num(result.assertions_passed)} ok / ${num(result.assertions_failed)} falhas`, result.steps_total == null ? "-" : `${num(result.steps_passed)} / ${num(result.steps_total)}`, esc(result.error_message || "-")])) : `<p class="muted">Ainda nao ha execucoes reais para este teste.</p>`}</article><article class="card"><h3>Configuracao</h3><pre><code>${esc(JSON.stringify({ assertions: test.assertions, flow_steps: test.flow_steps, headers: test.headers }, null, 2))}</code></pre></article></section>`);
+  const baseline = data.baseline || {};
+  const timingBaseline = data.timing_baseline || {};
+  const latest = results[0] || {};
+  const latestTimings = latest.timings || {};
+  const timingRows = [
+    ["DNS", latestTimings.dns_ms, timingBaseline.p95_dns_ms],
+    ["Connect", latestTimings.connect_ms, timingBaseline.p95_connect_ms],
+    ["TLS", latestTimings.tls_ms, timingBaseline.p95_tls_ms],
+    ["TTFB", latestTimings.ttfb_ms, timingBaseline.p95_ttfb_ms],
+    ["Download", latestTimings.download_ms, timingBaseline.p95_download_ms],
+    ["Total", latestTimings.total_ms, timingBaseline.p95_total_ms],
+  ];
+  render(`<section class="grid">
+    <article class="card">
+      <div class="actions">
+        <button id="back-synthetics" class="button ghost" type="button">Voltar</button>
+        <button id="run-synthetic-detail" class="button primary" type="button">Executar agora</button>
+      </div>
+      <h3>${esc(test.name)}</h3>
+      <p class="muted">${esc(test.description || "Sem descricao.")}</p>
+      <div class="detail-kpis">
+        ${metricTile("Tipo", esc(test.type))}
+        ${metricTile("Status", esc(test.last_status || "unknown"))}
+        ${metricTile("Ultima execucao", fmt(test.last_check))}
+        ${metricTile("Resposta", test.last_response_ms ? `${num(test.last_response_ms)} ms` : "-")}
+        ${metricTile("Baseline p95", baseline.p95_response_ms ? `${num(baseline.p95_response_ms)} ms` : "-")}
+        ${metricTile("Uptime", `${num(test.uptime_pct)}%`)}
+      </div>
+      <p><strong>URL:</strong> <span class="mono">${esc(test.url || "-")}</span></p>
+      ${latest.remote_ip ? `<p class="muted">Ultimo IP remoto: <span class="mono">${esc(latest.remote_ip)}</span></p>` : ""}
+    </article>
+    <article class="card">
+      <h3>Timing detalhado</h3>
+      <p class="muted">DNS, connect e TLS sao medidos em preflight (best-effort). TTFB e total sao medidos durante a request.</p>
+      ${latestTimings && Object.keys(latestTimings).length ? table(["Fase", "Ultimo (ms)", "Baseline p95 (ms)"], timingRows.map(([label, last, p95]) => [esc(label), last == null ? "-" : num(last), p95 == null ? "-" : num(p95)])) : `<p class="muted">Sem timings avancados ainda. Execute o teste para gerar.</p>`}
+      ${latestTimings.bytes ? `<p class="muted">Bytes baixados: ${num(latestTimings.bytes)}</p>` : ""}
+    </article>
+    <article class="card">
+      <h3>Historico de execucoes</h3>
+      ${results.length ? table(["Quando", "Status", "HTTP", "Resposta", "SSL", "Assertions", "Steps", "Erro"], results.map((result) => [
+        fmt(result.timestamp),
+        status(result.status),
+        esc(result.status_code || "-"),
+        result.response_time_ms ? `${num(result.response_time_ms)} ms` : "-",
+        result.ssl_days_remaining == null ? "-" : `${num(result.ssl_days_remaining)} dias`,
+        `${num(result.assertions_passed)} ok / ${num(result.assertions_failed)} falhas`,
+        result.steps_total == null ? "-" : `${num(result.steps_passed)} / ${num(result.steps_total)}`,
+        esc(result.error_message || "-"),
+      ])) : `<p class="muted">Ainda nao ha execucoes reais para este teste.</p>`}
+    </article>
+    <article class="card">
+      <h3>Recursos (waterfall)</h3>
+      ${(latest.resources || []).length ? table(["Recurso", "HTTP", "Total (ms)", "TTFB (ms)", "Bytes"], latest.resources.slice(0, 20).map((res) => [
+        `<span class="mono">${esc(res.url || "-")}</span>`,
+        esc(res.status_code || "-"),
+        res.total_ms == null ? "-" : num(res.total_ms),
+        res.ttfb_ms == null ? "-" : num(res.ttfb_ms),
+        res.bytes == null ? "-" : num(res.bytes),
+      ])) : `<p class="muted">Nenhum recurso coletado. Este detalhamento aparece em paginas HTML (URL monitor).</p>`}
+    </article>
+    <article class="card">
+      <h3>Configuracao</h3>
+      <pre><code>${esc(JSON.stringify({ assertions: test.assertions, flow_steps: test.flow_steps, headers: test.headers }, null, 2))}</code></pre>
+    </article>
+  </section>`);
   $("#back-synthetics").addEventListener("click", renderSynthetics);
   $("#run-synthetic-detail").addEventListener("click", async () => {
     await api(`/api/v1/synthetics/${testId}/run`, { method: "POST" });
@@ -1277,7 +1341,202 @@ async function renderTicketDetail(ticketId) {
 
 async function renderIntegrations() {
   const items = await api("/api/v1/extensions");
-  render(`<article class="card"><div class="section-header"><div><h3>Integracoes</h3><p class="muted">Catalogo de integracoes e extensoes. Cada integracao informa dados coletaveis e onde correlaciona na plataforma.</p></div></div>${items.length ? table(["Integracao", "Categoria", "Status", "Dados coletados", "Correlacao"], items.map((extension) => [`<strong>${esc(extension.name)}</strong><br><small>${esc(extension.slug)}</small><p class="muted">${esc(extension.description || "")}</p>`, esc(extension.category || "-"), extension.installed ? (extension.enabled ? "habilitada" : "instalada/desligada") : "nao instalada", esc((extension.metrics || []).join(", ") || "-"), esc(integrationCorrelation(extension.category))])) : `<p class="muted">Nenhuma extensao catalogada ainda.</p>`}</article>`);
+  render(`
+    <section class="grid">
+      <article class="card">
+        <div class="section-header">
+          <div>
+            <h3>Integracoes e Extensoes</h3>
+            <p class="muted">Configure instancias reais (ex.: varios bancos) e execute via gateway do tenant (recomendado) para coletar metricas dentro da rede do cliente.</p>
+          </div>
+        </div>
+        ${items.length ? table(
+          ["Integracao", "Categoria", "Status", "Instancias", "Dados coletados", "Correlacao", "Acoes"],
+          items.map((extension) => [
+            `<strong>${esc(extension.name)}</strong><br><small>${esc(extension.slug)}</small><p class="muted">${esc(extension.description || "")}</p>`,
+            esc(extension.category || "-"),
+            extension.installed ? (extension.enabled ? "habilitada" : "instalada/desligada") : "nao instalada",
+            num(extension.instances || 0),
+            esc((extension.metrics || []).join(", ") || "-"),
+            esc(integrationCorrelation(extension.category)),
+            `<button class="button ghost extension-manage" data-slug="${esc(extension.slug)}" type="button">Gerenciar</button>`,
+          ])
+        ) : `<p class="muted">Nenhuma extensao catalogada ainda.</p>`}
+      </article>
+      <div id="extension-modal-backdrop" class="modal-backdrop hidden"></div>
+      <section id="extension-modal" class="modal hidden" aria-hidden="true">
+        <article class="card">
+          <div class="section-header">
+            <div>
+              <h3 id="extension-modal-title">Extensao</h3>
+              <p id="extension-modal-subtitle" class="muted"></p>
+            </div>
+            <div class="actions">
+              <button id="extension-modal-close" class="button ghost" type="button">Fechar</button>
+            </div>
+          </div>
+          <div id="extension-modal-body"></div>
+        </article>
+      </section>
+    </section>
+  `);
+
+  const closeModal = () => {
+    $("#extension-modal").classList.add("hidden");
+    $("#extension-modal-backdrop").classList.add("hidden");
+  };
+  $("#extension-modal-close").addEventListener("click", closeModal);
+  $("#extension-modal-backdrop").addEventListener("click", closeModal);
+
+  const renderInstanceForm = (extension, instance) => {
+    const cfg = instance?.config || {};
+    const jsonCfg = JSON.stringify(cfg || {}, null, 2);
+    return `
+      <form class="form-grid extension-instance-form" data-instance-id="${esc(instance?.id || "")}">
+        <label>Nome da instancia
+          <input name="name" value="${esc(instance?.name || "default")}" required>
+        </label>
+        <label>Executar em
+          <select name="run_on">
+            <option value="auto" ${(instance?.run_on || "auto") === "auto" ? "selected" : ""}>auto (gateway se existir)</option>
+            <option value="gateway" ${(instance?.run_on || "") === "gateway" ? "selected" : ""}>gateway</option>
+            <option value="server" ${(instance?.run_on || "") === "server" ? "selected" : ""}>server (somente endpoints publicos)</option>
+          </select>
+        </label>
+        <label>Gateway tipo
+          <select name="gateway_type">
+            <option value="integrations" ${(instance?.gateway_type || "integrations") === "integrations" ? "selected" : ""}>integracoes</option>
+            <option value="agents" ${(instance?.gateway_type || "") === "agents" ? "selected" : ""}>agents</option>
+            <option value="security" ${(instance?.gateway_type || "") === "security" ? "selected" : ""}>seguranca</option>
+            <option value="logs" ${(instance?.gateway_type || "") === "logs" ? "selected" : ""}>logs</option>
+          </select>
+        </label>
+        <label>Intervalo (s)
+          <input name="interval_seconds" type="number" min="60" value="${esc(String(instance?.interval_seconds || 300))}">
+        </label>
+        <label><input type="checkbox" name="enabled" style="width:auto; margin-right:8px" ${instance?.enabled !== false ? "checked" : ""}>Habilitada</label>
+        <label style="grid-column:1/-1">Configuracao JSON
+          <textarea name="config" rows="10" spellcheck="false" class="mono">${esc(jsonCfg)}</textarea>
+        </label>
+      </form>
+      <div class="actions">
+        <button class="button primary extension-save" type="button" data-instance-id="${esc(instance?.id || "")}">Salvar</button>
+        ${instance?.id ? `<button class="button ghost extension-run" type="button" data-instance-id="${esc(instance.id)}">Executar agora</button>` : ""}
+        ${instance?.id ? `<button class="button ghost extension-delete" type="button" data-instance-id="${esc(instance.id)}">Excluir</button>` : ""}
+      </div>
+      <p class="muted">Dica (DB): use chaves como host/port/user/password/database e opcionalmente custom_queries: [{"metric":"total_orders","query":"SELECT 1"}].</p>
+    `;
+  };
+
+  const openModal = async (slug) => {
+    $("#extension-modal").classList.remove("hidden");
+    $("#extension-modal-backdrop").classList.remove("hidden");
+    $("#extension-modal-body").innerHTML = `<p class="muted">Carregando...</p>`;
+    const detail = await api(`/api/v1/extensions/${encodeURIComponent(slug)}`);
+    const extension = detail.extension || {};
+    const instances = detail.instances || [];
+    $("#extension-modal-title").textContent = extension.name || slug;
+    $("#extension-modal-subtitle").textContent = `${extension.slug || slug} • ${extension.category || "-"}`;
+    $("#extension-modal-body").innerHTML = `
+      <div class="grid two">
+        <article class="card">
+          <h3>Instancias cadastradas</h3>
+          ${instances.length ? table(["Nome", "Status", "Ultima coleta", "Metricas", "Acoes"], instances.map((inst) => [
+            `<button class="link-button extension-edit" type="button" data-instance-id="${esc(inst.id)}">${esc(inst.name)}</button>`,
+            status(inst.last_status || "unknown"),
+            fmt(inst.last_check),
+            num(inst.metrics_collected || 0),
+            `<button class="button ghost extension-run" type="button" data-instance-id="${esc(inst.id)}">Executar</button>`,
+          ])) : `<p class="muted">Nenhuma instancia criada ainda.</p>`}
+          <div class="actions" style="margin-top:12px">
+            <button id="extension-new" class="button primary" type="button">Nova instancia</button>
+          </div>
+        </article>
+        <article class="card">
+          <h3 id="extension-form-title">Nova instancia</h3>
+          <div id="extension-form-area">${renderInstanceForm(extension, null)}</div>
+          <p id="extension-form-message" class="message"></p>
+        </article>
+      </div>
+    `;
+
+    const getFormPayload = () => {
+      const form = $(".extension-instance-form");
+      const values = Object.fromEntries(new FormData(form).entries());
+      let config = {};
+      try { config = values.config ? JSON.parse(values.config) : {}; } catch { throw new Error("Config JSON invalido."); }
+      return {
+        name: values.name,
+        enabled: !!form.enabled.checked,
+        run_on: values.run_on,
+        gateway_type: values.gateway_type,
+        interval_seconds: Number(values.interval_seconds || 300),
+        config,
+      };
+    };
+
+    const refresh = () => openModal(slug);
+
+    $("#extension-new").addEventListener("click", () => {
+      $("#extension-form-title").textContent = "Nova instancia";
+      $("#extension-form-area").innerHTML = renderInstanceForm(extension, null);
+      $("#extension-form-message").textContent = "";
+      bindFormButtons();
+    });
+
+    const bindFormButtons = () => {
+      $(".extension-save")?.addEventListener("click", async () => {
+        try {
+          const payload = getFormPayload();
+          const instanceId = $(".extension-save").dataset.instanceId;
+          if (instanceId) {
+            await api(`/api/v1/extensions/instances/${encodeURIComponent(instanceId)}`, { method: "PUT", body: JSON.stringify(payload) });
+            $("#extension-form-message").textContent = "Instancia atualizada.";
+          } else {
+            await api(`/api/v1/extensions/${encodeURIComponent(slug)}/instances`, { method: "POST", body: JSON.stringify(payload) });
+            $("#extension-form-message").textContent = "Instancia criada.";
+          }
+          await refresh();
+        } catch (error) {
+          $("#extension-form-message").textContent = error.message;
+        }
+      });
+      $$(".extension-run").forEach((btn) => btn.addEventListener("click", async () => {
+        const instanceId = btn.dataset.instanceId;
+        try {
+          await api(`/api/v1/extensions/instances/${encodeURIComponent(instanceId)}/run`, { method: "POST" });
+          $("#extension-form-message").textContent = "Execucao enfileirada no gateway.";
+          await refresh();
+        } catch (error) {
+          $("#extension-form-message").textContent = error.message;
+        }
+      }));
+      $$(".extension-delete").forEach((btn) => btn.addEventListener("click", async () => {
+        const instanceId = btn.dataset.instanceId;
+        if (!confirm("Excluir esta instancia?")) return;
+        try {
+          await api(`/api/v1/extensions/instances/${encodeURIComponent(instanceId)}`, { method: "DELETE" });
+          $("#extension-form-message").textContent = "Instancia excluida.";
+          await refresh();
+        } catch (error) {
+          $("#extension-form-message").textContent = error.message;
+        }
+      }));
+    };
+
+    bindFormButtons();
+
+    $$(".extension-edit").forEach((btn) => btn.addEventListener("click", () => {
+      const instanceId = btn.dataset.instanceId;
+      const instance = instances.find((it) => it.id === instanceId);
+      $("#extension-form-title").textContent = `Editar: ${instance?.name || instanceId}`;
+      $("#extension-form-area").innerHTML = renderInstanceForm(extension, instance);
+      $("#extension-form-message").textContent = "";
+      bindFormButtons();
+    }));
+  };
+
+  $$(".extension-manage").forEach((button) => button.addEventListener("click", () => openModal(button.dataset.slug)));
 }
 
 function integrationCorrelation(category) {

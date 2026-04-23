@@ -128,6 +128,15 @@ class ExtensionConfigPayload(BaseModel):
     config: dict = Field(default_factory=dict)
 
 
+class ExtensionInstancePayload(BaseModel):
+    name: str = Field(default="default", min_length=1, max_length=255)
+    enabled: bool = True
+    config: dict = Field(default_factory=dict)
+    run_on: str = "auto"  # auto|gateway|server|agent (agent reserved)
+    gateway_type: Optional[str] = "integrations"
+    interval_seconds: int = 300
+
+
 @router.get("/tenants")
 async def list_tenants(
     db: AsyncSession = Depends(get_db),
@@ -754,7 +763,10 @@ async def list_extensions(
 ):
     ext_result = await db.execute(select(Extension).where(Extension.is_active == True).order_by(Extension.name))
     cfg_result = await db.execute(select(ExtensionConfig).where(ExtensionConfig.tenant_id == user.tenant_id))
-    configs = {cfg.extension_id: cfg for cfg in cfg_result.scalars().all()}
+    configs = cfg_result.scalars().all()
+    configs_by_ext: dict[str, list[ExtensionConfig]] = {}
+    for cfg in configs:
+        configs_by_ext.setdefault(cfg.extension_id, []).append(cfg)
     extensions = ext_result.scalars().all()
     return [
         {
@@ -766,12 +778,204 @@ async def list_extensions(
             "version": ext.version,
             "author": ext.author,
             "is_official": ext.is_official,
-            "installed": ext.id in configs,
-            "enabled": configs.get(ext.id).enabled if ext.id in configs else False,
+            "installed": ext.id in configs_by_ext,
+            "enabled": any(cfg.enabled for cfg in configs_by_ext.get(ext.id, [])) if ext.id in configs_by_ext else False,
+            "instances": len(configs_by_ext.get(ext.id, [])),
+            "last_status": (sorted(
+                [cfg for cfg in configs_by_ext.get(ext.id, []) if cfg.last_check],
+                key=lambda cfg: cfg.last_check,
+                reverse=True,
+            )[0].last_status if any(cfg.last_check for cfg in configs_by_ext.get(ext.id, [])) else (
+                configs_by_ext.get(ext.id, [None])[0].last_status if configs_by_ext.get(ext.id) else None
+            )),
             "metrics": ext.metrics or [],
         }
         for ext in extensions
     ]
+
+
+@router.get("/extensions/{extension_slug}")
+async def get_extension_detail(
+    extension_slug: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_admin(user)
+    ext_result = await db.execute(select(Extension).where(Extension.slug == extension_slug, Extension.is_active == True))
+    extension = ext_result.scalar_one_or_none()
+    if not extension:
+        raise HTTPException(status_code=404, detail="Extension not found")
+    cfg_result = await db.execute(
+        select(ExtensionConfig).where(
+            ExtensionConfig.tenant_id == user.tenant_id,
+            ExtensionConfig.extension_id == extension.id,
+        ).order_by(desc(ExtensionConfig.last_check), ExtensionConfig.name)
+    )
+    instances = cfg_result.scalars().all()
+    return {
+        "extension": {
+            "id": extension.id,
+            "slug": extension.slug,
+            "name": extension.name,
+            "description": extension.description,
+            "category": extension.category,
+            "version": extension.version,
+            "author": extension.author,
+            "metrics": extension.metrics or [],
+            "config_schema": extension.config_schema or {},
+            "readme": extension.readme,
+        },
+        "instances": [
+            {
+                "id": cfg.id,
+                "name": cfg.name,
+                "enabled": cfg.enabled,
+                "run_on": cfg.run_on,
+                "gateway_type": cfg.gateway_type,
+                "interval_seconds": cfg.interval_seconds,
+                "last_check": cfg.last_check.isoformat() if cfg.last_check else None,
+                "last_status": cfg.last_status,
+                "last_error": cfg.last_error,
+                "metrics_collected": cfg.metrics_collected or 0,
+                "config": cfg.config or {},
+            }
+            for cfg in instances
+        ],
+    }
+
+
+async def select_extension_gateway(
+    db: AsyncSession,
+    tenant_id: str,
+    gateway_type: Optional[str] = None,
+) -> Gateway | None:
+    query = select(Gateway).where(Gateway.tenant_id == tenant_id, Gateway.status == "online")
+    if gateway_type:
+        query = query.where(Gateway.type == gateway_type)
+    query = query.order_by(desc(Gateway.last_heartbeat), Gateway.name).limit(50)
+    result = await db.execute(query)
+    for gateway in result.scalars().all():
+        modules = ((gateway.config or {}).get("last_metadata") or {}).get("modules") or {}
+        if gateway.type == "integrations" or modules.get("integrations") or modules.get("database") or modules.get("itsm") or modules.get("webhooks"):
+            return gateway
+    return None
+
+
+@router.post("/extensions/{extension_slug}/instances")
+async def create_extension_instance(
+    extension_slug: str,
+    payload: ExtensionInstancePayload,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_admin(user)
+    ext_result = await db.execute(select(Extension).where(Extension.slug == extension_slug, Extension.is_active == True))
+    extension = ext_result.scalar_one_or_none()
+    if not extension:
+        raise HTTPException(status_code=404, detail="Extension not found")
+    instance = ExtensionConfig(
+        id=str(uuid.uuid4()),
+        tenant_id=user.tenant_id,
+        extension_id=extension.id,
+        name=payload.name.strip() or "default",
+        enabled=payload.enabled,
+        config=payload.config or {},
+        run_on=(payload.run_on or "auto"),
+        gateway_type=(payload.gateway_type or None),
+        interval_seconds=max(60, int(payload.interval_seconds or 300)),
+        last_status="configured",
+    )
+    db.add(instance)
+    await db.commit()
+    return {"status": "created", "id": instance.id}
+
+
+@router.put("/extensions/instances/{instance_id}")
+async def update_extension_instance(
+    instance_id: str,
+    payload: ExtensionInstancePayload,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_admin(user)
+    instance = await db.get(ExtensionConfig, instance_id)
+    if not instance or instance.tenant_id != user.tenant_id:
+        raise HTTPException(status_code=404, detail="Extension instance not found")
+    instance.name = payload.name.strip() or instance.name
+    instance.enabled = payload.enabled
+    instance.config = payload.config or {}
+    instance.run_on = payload.run_on or instance.run_on
+    instance.gateway_type = payload.gateway_type or instance.gateway_type
+    instance.interval_seconds = max(60, int(payload.interval_seconds or instance.interval_seconds or 300))
+    instance.last_status = "configured"
+    await db.commit()
+    return {"status": "saved"}
+
+
+@router.delete("/extensions/instances/{instance_id}")
+async def delete_extension_instance(
+    instance_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_admin(user)
+    instance = await db.get(ExtensionConfig, instance_id)
+    if not instance or instance.tenant_id != user.tenant_id:
+        raise HTTPException(status_code=404, detail="Extension instance not found")
+    await db.delete(instance)
+    await db.commit()
+    return {"status": "deleted"}
+
+
+@router.post("/extensions/instances/{instance_id}/run")
+async def run_extension_instance_now(
+    instance_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_admin(user)
+    instance = await db.get(ExtensionConfig, instance_id)
+    if not instance or instance.tenant_id != user.tenant_id:
+        raise HTTPException(status_code=404, detail="Extension instance not found")
+    extension = await db.get(Extension, instance.extension_id)
+    if not extension or not extension.is_active:
+        raise HTTPException(status_code=404, detail="Extension not found")
+
+    run_on = (instance.run_on or "auto").lower()
+    if run_on in {"agent"}:
+        raise HTTPException(status_code=400, detail="Agent execution is not available yet. Use gateway execution.")
+
+    gateway = await select_extension_gateway(db, user.tenant_id, instance.gateway_type or "integrations")
+    if not gateway:
+        raise HTTPException(status_code=503, detail="No online gateway available to execute this extension")
+
+    command = {
+        "extension_slug": extension.slug,
+        "instance_id": instance.id,
+        "instance_name": instance.name,
+        "config": instance.config or {},
+    }
+    task = Task(
+        id=str(uuid.uuid4()),
+        tenant_id=user.tenant_id,
+        name=f"Extension {extension.slug} ({instance.name})",
+        type="extension_collect",
+        status="pending",
+        priority="medium",
+        target=instance.id,
+        description=f"Execucao de extensao via gateway {gateway.name}.",
+        scheduled_at=datetime.now(timezone.utc),
+        created_by=user.id,
+        result={
+            "gateway_execution": True,
+            "gateway_id": gateway.id,
+            "gateway_name": gateway.name,
+            "command": command,
+        },
+    )
+    db.add(task)
+    await db.commit()
+    return {"status": "queued_gateway", "task_id": task.id, "gateway_id": gateway.id}
 
 
 @router.post("/extensions/config")
@@ -789,6 +993,7 @@ async def save_extension_config(
         select(ExtensionConfig).where(
             ExtensionConfig.tenant_id == user.tenant_id,
             ExtensionConfig.extension_id == extension.id,
+            ExtensionConfig.name == "default",
         )
     )
     config = cfg_result.scalar_one_or_none()
@@ -797,6 +1002,7 @@ async def save_extension_config(
             id=str(uuid.uuid4()),
             tenant_id=user.tenant_id,
             extension_id=extension.id,
+            name="default",
         )
         db.add(config)
     config.enabled = payload.enabled

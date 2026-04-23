@@ -95,6 +95,16 @@ async def ensure_schema_migrations(conn):
         "ALTER TABLE IF EXISTS rum_sessions ADD COLUMN IF NOT EXISTS errors_total INTEGER DEFAULT 0",
         "ALTER TABLE IF EXISTS tickets ADD COLUMN IF NOT EXISTS priority INTEGER DEFAULT 3",
         "ALTER TABLE IF EXISTS tickets ALTER COLUMN created_by DROP NOT NULL",
+        # Extensions / plugins (multi-instance + delegated execution)
+        "ALTER TABLE IF EXISTS extension_configs ADD COLUMN IF NOT EXISTS name VARCHAR(255) DEFAULT 'default'",
+        "ALTER TABLE IF EXISTS extension_configs ADD COLUMN IF NOT EXISTS run_on VARCHAR(20) DEFAULT 'auto'",
+        "ALTER TABLE IF EXISTS extension_configs ADD COLUMN IF NOT EXISTS gateway_type VARCHAR(50)",
+        "ALTER TABLE IF EXISTS extension_configs ADD COLUMN IF NOT EXISTS interval_seconds INTEGER DEFAULT 300",
+        "ALTER TABLE IF EXISTS extension_configs ADD COLUMN IF NOT EXISTS next_run_at TIMESTAMP WITH TIME ZONE",
+        # Synthetic timings (detailed breakdown + resources)
+        "ALTER TABLE IF EXISTS synthetic_results ADD COLUMN IF NOT EXISTS timings JSON DEFAULT '{}'::json",
+        "ALTER TABLE IF EXISTS synthetic_results ADD COLUMN IF NOT EXISTS resources JSON DEFAULT '[]'::json",
+        "ALTER TABLE IF EXISTS synthetic_results ADD COLUMN IF NOT EXISTS remote_ip VARCHAR(100)",
         """
         DO $$
         BEGIN

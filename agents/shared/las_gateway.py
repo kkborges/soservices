@@ -719,11 +719,199 @@ def run_gateway_task(task: dict) -> dict:
         return run_snmp_refresh_task(command)
     if task_type == "snmp_get":
         return run_snmp_get_task(command)
+    if task_type == "extension_collect":
+        return run_extension_collect_task(command)
     raise RuntimeError(f"Tipo de task nao suportado pelo gateway: {task_type}")
 
 
+async def _collect_postgresql_extension(cfg: dict) -> dict:
+    import asyncpg
+
+    conn = await asyncpg.connect(
+        host=cfg.get("host", "localhost"),
+        port=int(cfg.get("port") or 5432),
+        user=cfg.get("user", "postgres"),
+        password=cfg.get("password", ""),
+        database=cfg.get("database", "postgres"),
+    )
+    try:
+        active_conns = await conn.fetchval("SELECT count(*) FROM pg_stat_activity WHERE state = 'active'")
+        longest = await conn.fetchval(
+            "SELECT EXTRACT(EPOCH FROM max(now() - query_start)) FROM pg_stat_activity WHERE state = 'active'"
+        )
+        cache_hit = await conn.fetchval(
+            """
+            SELECT round(
+                sum(blks_hit) * 100.0 / nullif(sum(blks_hit + blks_read), 0), 2
+            ) FROM pg_stat_database
+            """
+        )
+        metrics: dict[str, Any] = {
+            "active_connections": int(active_conns or 0),
+            "longest_query_s": float(longest or 0),
+            "cache_hit_ratio": float(cache_hit or 0),
+        }
+        return metrics
+    finally:
+        await conn.close()
+
+
+async def _collect_mysql_extension(cfg: dict) -> dict:
+    import aiomysql
+
+    conn = await aiomysql.connect(
+        host=cfg.get("host", "localhost"),
+        port=int(cfg.get("port") or 3306),
+        user=cfg.get("user", "root"),
+        password=cfg.get("password", ""),
+        db=cfg.get("database", "information_schema"),
+    )
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SHOW GLOBAL STATUS WHERE Variable_name IN ('Threads_connected','Queries','Uptime')"
+            )
+            rows = await cur.fetchall()
+            status = {r[0]: r[1] for r in rows}
+        return {
+            "threads_connected": int(status.get("Threads_connected", 0)),
+            "queries_total": int(status.get("Queries", 0)),
+            "uptime_s": int(status.get("Uptime", 0)),
+        }
+    finally:
+        conn.close()
+
+
+async def _collect_http_json(url: str, timeout_s: int = 5) -> dict:
+    import httpx
+
+    async with httpx.AsyncClient(timeout=timeout_s, follow_redirects=True) as client:
+        resp = await client.get(url)
+        try:
+            return resp.json() if isinstance(resp.json(), dict) else {"status_code": resp.status_code}
+        except Exception:
+            return {"status_code": resp.status_code}
+
+
+async def _run_custom_queries(engine: str, cfg: dict, conn) -> dict:
+    """Execute user-defined queries and map numeric output to metrics.
+
+    Config format:
+      custom_queries: [{ "metric": "my.metric", "query": "SELECT 1", "column": 0 }]
+    """
+    queries = cfg.get("custom_queries") or cfg.get("queries") or []
+    metrics: dict[str, Any] = {}
+    if not isinstance(queries, list):
+        return metrics
+    for item in queries[:20]:
+        if not isinstance(item, dict):
+            continue
+        metric_name = str(item.get("metric") or item.get("name") or "").strip()
+        query = str(item.get("query") or "").strip()
+        if not metric_name or not query:
+            continue
+        column = item.get("column", 0)
+        try:
+            if engine == "postgresql":
+                value = await conn.fetchval(query)
+            elif engine in {"mysql", "mariadb"}:
+                async with conn.cursor() as cur:
+                    await cur.execute(query)
+                    row = await cur.fetchone()
+                value = row[column] if row else None
+            else:
+                value = None
+            if isinstance(value, bool):
+                value = 1 if value else 0
+            if isinstance(value, (int, float)):
+                metrics[f"custom.{metric_name}"] = float(value)
+        except Exception as exc:
+            metrics[f"custom.{metric_name}.error"] = 1
+            metrics[f"custom.{metric_name}.ok"] = 0
+            metrics[f"custom.{metric_name}.message"] = str(exc)[:200]
+    return metrics
+
+
+def run_extension_collect_task(command: dict) -> dict:
+    slug = str(command.get("extension_slug") or "").strip().lower()
+    cfg = command.get("config") or {}
+    if not slug:
+        raise RuntimeError("extension_slug obrigatorio")
+
+    async def runner() -> dict:
+        engine = slug
+        if engine == "postgresql":
+            import asyncpg
+            conn = await asyncpg.connect(
+                host=cfg.get("host", "localhost"),
+                port=int(cfg.get("port") or 5432),
+                user=cfg.get("user", "postgres"),
+                password=cfg.get("password", ""),
+                database=cfg.get("database", "postgres"),
+            )
+            try:
+                metrics = await _collect_postgresql_extension(cfg)
+                metrics.update(await _run_custom_queries(engine, cfg, conn))
+                return metrics
+            finally:
+                await conn.close()
+        if engine in {"mysql", "mariadb"}:
+            import aiomysql
+            conn = await aiomysql.connect(
+                host=cfg.get("host", "localhost"),
+                port=int(cfg.get("port") or 3306),
+                user=cfg.get("user", "root"),
+                password=cfg.get("password", ""),
+                db=cfg.get("database", "information_schema"),
+            )
+            try:
+                metrics = await _collect_mysql_extension(cfg)
+                metrics.update(await _run_custom_queries(engine, cfg, conn))
+                return metrics
+            finally:
+                conn.close()
+        if engine in {"nginx", "apache"}:
+            url = cfg.get("stub_status_url") or cfg.get("status_url") or ""
+            if not url:
+                raise RuntimeError("Informe stub_status_url/status_url na configuracao.")
+            return await _collect_http_json(url, timeout_s=int(cfg.get("timeout_seconds") or 5))
+        if engine == "tomcat":
+            url = cfg.get("status_url") or ""
+            if not url:
+                host = cfg.get("host", "localhost")
+                port = int(cfg.get("port") or 8080)
+                url = f"http://{host}:{port}/manager/status?XML=true"
+            return await _collect_http_json(url, timeout_s=int(cfg.get("timeout_seconds") or 5))
+        raise RuntimeError(f"Extensao nao suportada no gateway ainda: {slug}")
+
+    try:
+        metrics = asyncio.run(runner())
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(str(exc)) from exc
+
+    return {
+        "extension_slug": slug,
+        "instance_id": command.get("instance_id"),
+        "instance_name": command.get("instance_name"),
+        "metrics": metrics,
+    }
+
+
 def gateway_task_loop(config: configparser.ConfigParser) -> None:
-    if not config.getboolean("features", "network_discovery", fallback=True):
+    # Run task loop whenever the gateway has any task-capable module enabled.
+    task_capable = any(
+        [
+            config.getboolean("features", "network_discovery", fallback=False),
+            config.getboolean("features", "snmp", fallback=False),
+            config.getboolean("features", "integrations", fallback=False),
+            config.getboolean("features", "database", fallback=False),
+            config.getboolean("features", "itsm", fallback=False),
+            config.getboolean("features", "webhooks", fallback=False),
+        ]
+    )
+    if not task_capable:
         return
     base_url = config.get("mtls", "platform_url", fallback=get_platform_url(config)).rstrip("/")
     token = get_gateway_token(config)

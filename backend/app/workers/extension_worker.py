@@ -3,7 +3,8 @@ Extension Worker — Collects metrics from installed extensions (PostgreSQL, MyS
 """
 import asyncio
 import logging
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timezone, timedelta
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -25,8 +26,8 @@ def collect_all():
 
 async def _collect_all_extensions_async():
     from app.db.base import AsyncSessionLocal
-    from app.models import ExtensionConfig, Extension
-    from sqlalchemy import select
+    from app.models import ExtensionConfig, Extension, Gateway, Task
+    from sqlalchemy import select, desc
 
     async with AsyncSessionLocal() as db:
         configs_result = await db.execute(
@@ -36,15 +37,109 @@ async def _collect_all_extensions_async():
         )
         configs = configs_result.fetchall()
 
-        tasks = []
+        # Prefer gateway execution (inside customer network). If no suitable gateway exists, fall back to server-side.
+        dispatched = 0
+        collected_local = 0
+        errors = 0
+
+        gateways_result = await db.execute(
+            select(Gateway)
+            .where(Gateway.status == "online")
+            .order_by(desc(Gateway.last_heartbeat), Gateway.name)
+            .limit(300)
+        )
+        gateways_by_tenant: dict[str, list[Gateway]] = {}
+        for gw in gateways_result.scalars().all():
+            gateways_by_tenant.setdefault(gw.tenant_id, []).append(gw)
+
+        def pick_gateway(tenant_id: str, preferred_type: str | None) -> Gateway | None:
+            candidates = gateways_by_tenant.get(tenant_id, [])
+            if preferred_type:
+                for gw in candidates:
+                    if gw.type == preferred_type:
+                        return gw
+            for gw in candidates:
+                modules = ((gw.config or {}).get("last_metadata") or {}).get("modules") or {}
+                if gw.type == "integrations" or modules.get("integrations") or modules.get("database") or modules.get("itsm") or modules.get("webhooks"):
+                    return gw
+            return candidates[0] if candidates else None
+
+        async def has_pending_task(instance_id: str) -> bool:
+            rows = await db.execute(
+                select(Task.id)
+                .where(
+                    Task.type == "extension_collect",
+                    Task.status.in_(["pending", "running"]),
+                    Task.target == instance_id,
+                )
+                .limit(1)
+            )
+            return rows.scalar_one_or_none() is not None
+
+        local_jobs: list[tuple] = []
+        now = datetime.now(timezone.utc)
         for config, extension in configs:
+            cfg = config.config or {}
+            run_on = str(config.run_on or cfg.get("run_on") or "auto").lower()
+            preferred_gateway_type = config.gateway_type or cfg.get("gateway_type")
+            if not preferred_gateway_type and extension.category in {"database", "integration", "notification"}:
+                preferred_gateway_type = "integrations"
+
+            interval = int(config.interval_seconds or cfg.get("interval_seconds") or 300)
+            due = True
+            if config.last_check and interval > 0:
+                due = now >= (config.last_check + timedelta(seconds=interval))
+            if not due:
+                continue
+
+            if run_on in {"gateway", "auto"}:
+                gateway = pick_gateway(config.tenant_id, preferred_gateway_type)
+                if gateway and not await has_pending_task(config.id):
+                    command = {
+                        "extension_slug": extension.slug,
+                        "instance_id": config.id,
+                        "instance_name": config.name,
+                        "config": config.config or {},
+                    }
+                    task = Task(
+                        id=str(uuid.uuid4()),
+                        tenant_id=config.tenant_id,
+                        name=f"Extension {extension.slug} ({config.name})",
+                        type="extension_collect",
+                        status="pending",
+                        priority="medium",
+                        target=config.id,
+                        description=f"Execucao de extensao via gateway {gateway.name}.",
+                        scheduled_at=now,
+                        result={
+                            "gateway_execution": True,
+                            "gateway_id": gateway.id,
+                            "gateway_name": gateway.name,
+                            "command": command,
+                        },
+                    )
+                    db.add(task)
+                    dispatched += 1
+                    continue
+
+            # Fallback: server-side handler (for public endpoints only).
             handler = _get_extension_handler(extension.slug)
             if handler:
-                tasks.append(handler(config))
+                local_jobs.append((handler, config, extension.slug))
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        errors = sum(1 for r in results if isinstance(r, Exception))
-        return {"collected": len(tasks) - errors, "errors": errors}
+        await db.commit()
+
+        for handler, config, slug in local_jobs:
+            try:
+                await handler(config)
+                collected_local += 1
+            except Exception as exc:
+                config.last_status = "error"
+                config.last_error = str(exc)
+                errors += 1
+
+        await db.commit()
+        return {"dispatched": dispatched, "collected_local": collected_local, "errors": errors}
 
 
 def _get_extension_handler(slug: str):
