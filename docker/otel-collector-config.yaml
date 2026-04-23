@@ -22,24 +22,18 @@ processors:
         value: las-otel-collector
 
 exporters:
-  otlphttp/las_traces:
+  otlp_http/las_traces:
     endpoint: http://las-api:8000/api/v1/ingest/otel/traces
-    headers:
-      content-type: application/json
-  otlphttp/las_metrics:
+  otlp_http/las_metrics:
     endpoint: http://las-api:8000/api/v1/ingest/otel/metrics
-    headers:
-      content-type: application/json
-  logging:
-    loglevel: warn
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlphttp/las_traces, logging]
+      exporters: [otlp_http/las_traces]
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlphttp/las_metrics]
+      exporters: [otlp_http/las_metrics]
