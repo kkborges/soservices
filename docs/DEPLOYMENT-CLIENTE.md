@@ -82,3 +82,49 @@ Esse seed nao inclui hosts, logs, traces ou metricas de exemplo.
 - definir `OPENAI_API_KEY` para habilitar analise inicial dos tickets
 - proteger o acesso com reverse proxy, TLS e firewall
 - definir subdominios de producao como `api.soservices.com.br` e `las.soservices.com.br`
+
+## Reverse Proxy (NPM ou Caddy)
+
+Hoje suportamos dois modos de entrada para o `frontend` e para a `API`:
+
+### Modo 1: Nginx Proxy Manager (NPM)
+
+- Use o compose `docker/docker-compose.proxy-manager.yml` (porta `80/443/81`).
+- No NPM, crie 2 hosts:
+  - `las.soservices.com.br` -> `las-frontend-ha:80` (rede `las-net`)
+  - `api.soservices.com.br` -> `las-api-ha:80` (rede `las-net`)
+- O mTLS edge (para agentes/gateways/OTLP) fica na porta `8443` (compose `docker/docker-compose.mtls.yml`).
+
+Observacao: se a maquina ja usa `80/443` para outro servico, o NPM nao podera ocupar essas portas.
+
+### Modo 2: Caddy externo (host do provedor)
+
+Quando o provedor ja usa Caddy como reverse proxy (mesmo que `80/443` estejam em uso pelo proprio Caddy),
+o correto nao e "redirect" para um container; e `reverse_proxy` para uma porta local publicada pelo Docker.
+
+1. Suba a stack sem o NPM e habilite o overlay de portas para o host:
+
+Exemplo (SaaS/HA release):
+
+- `docker-compose -f docker-compose.data-ha.yml -f docker-compose.ha.release.yml -f docker-compose.mtls.yml -f docker-compose.caddy-hostports.yml up -d`
+
+Isso publica:
+- `las-frontend-ha` em `127.0.0.1:8080`
+- `las-api-ha` em `127.0.0.1:8081`
+- `las-mtls-edge` continua em `127.0.0.1:8443`
+
+2. Adicione no seu `Caddyfile` algo como:
+
+```caddyfile
+las.soservices.com.br {
+  reverse_proxy 127.0.0.1:8080
+}
+
+api.soservices.com.br {
+  reverse_proxy 127.0.0.1:8081
+}
+```
+
+Notas:
+- mTLS para agentes/gateways permanece em `https://api.soservices.com.br:8443`.
+- Se voce quiser mTLS em `443` no Caddy, o Caddy precisa ser configurado para mTLS na borda (nao e o modo padrao atual).

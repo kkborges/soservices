@@ -1,0 +1,26 @@
+networks:
+  las-net:
+    external: true
+
+# Optional overlay when using an external reverse proxy (Caddy, corporate LB, etc.)
+# running on the Docker host. It publishes internal HA services to localhost
+# ports so the host proxy can `reverse_proxy 127.0.0.1:<port>`.
+#
+# Suggested mapping:
+# - Frontend (las.soservices.com.br) -> http://127.0.0.1:8080
+# - API (api.soservices.com.br)      -> http://127.0.0.1:8081
+#
+# mTLS edge remains on 8443 (see docker-compose.mtls.yml).
+services:
+  las-frontend-ha:
+    ports:
+      - "8080:80"
+    networks:
+      - las-net
+
+  las-api-ha:
+    ports:
+      - "8081:80"
+    networks:
+      - las-net
+
