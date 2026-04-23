@@ -1158,8 +1158,8 @@ download_agent() {{
           --cacert "/etc/las/mtls-ca.pem" \
           --cert "/etc/las/mtls-client.pem" \
           --key "/etc/las/mtls-client-key.pem" \
-          "$gw/api/v1/agents/artifacts/linux-agent.py" \
-          -o "$INSTALL_DIR/las-agent.py" ; then
+          "$gw/api/v1/agents/artifacts/linux-agent.bin" \
+          -o "$INSTALL_DIR/las-agent" ; then
           DOWNLOADED="1"
           break
         fi
@@ -1173,11 +1173,11 @@ download_agent() {{
         --cacert "/etc/las/mtls-ca.pem" \
         --cert "/etc/las/mtls-client.pem" \
         --key "/etc/las/mtls-client-key.pem" \
-        "$MTLS_PLATFORM_URL/api/v1/agents/artifacts/linux-agent.py" \
+        "$MTLS_PLATFORM_URL/api/v1/agents/artifacts/linux-agent.bin" \
         -H "Authorization: Bearer $AGENT_TOKEN" \
-        -o "$INSTALL_DIR/las-agent.py"
+        -o "$INSTALL_DIR/las-agent"
     fi
-    chmod +x "$INSTALL_DIR/las-agent.py"
+    chmod +x "$INSTALL_DIR/las-agent"
 }}
 
 install_service() {{
@@ -1192,7 +1192,7 @@ Type=simple
 Restart=always
 RestartSec=10
 User=root
-ExecStart=/usr/bin/env python3 $INSTALL_DIR/las-agent.py
+ExecStart=$INSTALL_DIR/las-agent
 StandardOutput=append:$LOG_DIR/agent.log
 StandardError=append:$LOG_DIR/agent-error.log
 Environment=LAS_CONFIG=$CONFIG_DIR/agent.conf
@@ -1486,10 +1486,10 @@ elif command -v apk >/dev/null 2>&1; then
   apk add --no-cache python3 py3-pip curl ca-certificates
 fi
 
-curl -fsSL "$PLATFORM_URL/api/v1/agents/artifacts/gateway.py" \
+curl -fsSL "$PLATFORM_URL/api/v1/agents/artifacts/linux-gateway.bin" \
   -H "Authorization: Bearer $GATEWAY_TOKEN" \
-  -o "$INSTALL_DIR/las-gateway.py"
-chmod +x "$INSTALL_DIR/las-gateway.py"
+  -o "$INSTALL_DIR/las-gateway"
+chmod +x "$INSTALL_DIR/las-gateway"
 
 HOSTNAME_VALUE=$(hostname -f 2>/dev/null || hostname)
 PUBLIC_ENDPOINT="https://${{HOSTNAME_VALUE}}:9443"
@@ -1597,7 +1597,7 @@ After=network.target
 [Service]
 Type=simple
 Restart=always
-ExecStart=/usr/bin/env python3 $INSTALL_DIR/las-gateway.py
+ExecStart=$INSTALL_DIR/las-gateway
 Environment=LAS_CONFIG=$CONFIG_DIR/gateway.conf
 Environment=NEXUS_CONFIG=$CONFIG_DIR/gateway.conf
 

@@ -98,9 +98,9 @@ COMPONENT_LATEST_VERSION = {
     "gateway": "4.1.3",
 }
 COMPONENT_ARTIFACTS = {
-    ("agent", "linux"): "linux-agent.py",
+    ("agent", "linux"): "linux-agent.bin",
     ("agent", "windows"): "windows-agent.exe",
-    ("gateway", "linux"): "gateway.py",
+    ("gateway", "linux"): "linux-gateway.bin",
     ("gateway", "windows"): "windows-gateway.exe",
 }
 
