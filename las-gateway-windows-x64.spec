@@ -6,7 +6,11 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=[],
+    hiddenimports=[
+        "asyncpg",
+        "aiomysql",
+        "httpx",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

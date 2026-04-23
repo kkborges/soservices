@@ -6,7 +6,11 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[('installer/windows/bin/nssm.exe', '.')],
-    hiddenimports=[],
+    hiddenimports=[
+        # Ensure embedded payload execution doesn't fail due to missing runtime libs.
+        "urllib.request",
+        "tkinter",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
