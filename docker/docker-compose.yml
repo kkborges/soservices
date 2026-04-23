@@ -207,7 +207,8 @@ services:
       - redis
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
+    # Pin version to avoid breaking config changes from :latest.
+    image: otel/opentelemetry-collector-contrib:0.150.1
     container_name: las-otel-collector
     restart: unless-stopped
     volumes:
