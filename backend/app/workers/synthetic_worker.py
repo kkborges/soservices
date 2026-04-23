@@ -106,22 +106,21 @@ async def _fetch_with_ttfb(
 
     timings: dict[str, Any] = {}
     total_bytes = 0
-    first_chunk: bytes | None = None
+    body_prefix = bytearray()
     start = time.monotonic()
     async with client.stream(method=method, url=url, headers=headers, content=body, timeout=timeout_s) as resp:
         async for chunk in resp.aiter_bytes():
-            if first_chunk is None:
-                first_chunk = chunk
+            if "ttfb_ms" not in timings:
                 timings["ttfb_ms"] = round((time.monotonic() - start) * 1000, 2)
             total_bytes += len(chunk or b"")
-            # keep only a snippet for UI / assertions
-            if first_chunk is not None and len(first_chunk) > 600:
-                first_chunk = first_chunk[:600]
+            if chunk and len(body_prefix) < 50_000:
+                remaining = 50_000 - len(body_prefix)
+                body_prefix.extend(chunk[:remaining])
         total_ms = (time.monotonic() - start) * 1000
         timings["total_ms"] = round(total_ms, 2)
         ttfb_ms = float(timings.get("ttfb_ms") or total_ms)
         timings["download_ms"] = round(max(0.0, total_ms - ttfb_ms), 2)
-        return resp, timings, first_chunk or b"", total_bytes
+        return resp, timings, bytes(body_prefix), total_bytes
 
 
 def run_async(coro):
@@ -234,7 +233,8 @@ async def _run_http_check(test_id: str, check_type: str):
                 result.status_code = resp.status_code
                 result.response_time_ms = elapsed_ms
                 result.response_headers = dict(resp.headers)
-                result.response_body_snippet = snippet_bytes.decode("utf-8", errors="replace")[:500]
+                body_text = snippet_bytes.decode("utf-8", errors="replace")
+                result.response_body_snippet = body_text[:500]
                 result.timings = {**(preflight_timings or {}), **(timing or {}), "bytes": total_bytes}
                 result.remote_ip = remote_ip
 
@@ -302,8 +302,8 @@ async def _run_http_check(test_id: str, check_type: str):
                 # Resource waterfall for HTML pages (URL monitor only; best-effort)
                 result.resources = []
                 content_type = (resp.headers.get("content-type") or "").lower()
-                if check_type == "url_monitor" and "text/html" in content_type and result.response_body_snippet:
-                    resources = _extract_resource_urls(result.response_body_snippet, test.url or "")
+                if check_type == "url_monitor" and "text/html" in content_type and body_text:
+                    resources = _extract_resource_urls(body_text, test.url or "")
                     resource_items = []
                     for resource_url in resources[:20]:
                         try:
