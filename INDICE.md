@@ -27,3 +27,10 @@
 ## Testes
 
 - [tests/TESTING_GUIDE.md](tests/TESTING_GUIDE.md)
+
+## Marketing (Comercial)
+
+- [docs/marketing/APRESENTACAO-CLIENTES.md](docs/marketing/APRESENTACAO-CLIENTES.md)
+- [docs/marketing/ONE-PAGER.md](docs/marketing/ONE-PAGER.md)
+- [docs/marketing/RESUMO-PARA-MARKETING.md](docs/marketing/RESUMO-PARA-MARKETING.md)
+- [docs/marketing/COPY-SOCIAL.md](docs/marketing/COPY-SOCIAL.md)
