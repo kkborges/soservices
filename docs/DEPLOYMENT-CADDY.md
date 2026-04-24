@@ -16,6 +16,22 @@ Este guia explica como publicar a plataforma LAS usando **Caddy** como reverse-p
    - `80/tcp` e `443/tcp` (Caddy)
    - se você usar mTLS em porta dedicada: `8443/tcp` (opcional)
 
+## Validar e recarregar a configuração (importante)
+
+O comando `caddy validate` assume **JSON** por padrão. Para validar um **Caddyfile**, use o adapter:
+
+```bash
+caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+```
+
+Se você está validando um fragmento em `conf.d/` (que normalmente é importado pelo `Caddyfile` principal), você pode validar o principal ou o arquivo isolado:
+
+```bash
+caddy validate --config /etc/caddy/conf.d/seu-arquivo.caddy --adapter caddyfile
+```
+
+Regra prática: mantenha **apenas 1 bloco por domínio** (`las.*` não deve aparecer duas vezes). Caso contrário, o parse/merge pode falhar.
+
 ## 2) Modo Standalone (sem Docker)
 
 ### 2.1 Frontend por arquivos estáticos
@@ -105,4 +121,3 @@ Sugestões comuns:
 
 - `api.*` (público para browser e automação)
 - `mtls-api.*` (restrito para agentes/gateways, com mTLS)
-
