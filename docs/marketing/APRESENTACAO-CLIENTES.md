@@ -75,8 +75,9 @@ Notas de fala:
 - Metricas reais: CPU, memoria, disco, rede e **processos**.
 - Detalhes por host (status, modo de monitoramento, consumo por recurso).
 
-[Placeholder: screenshot lista de hosts]  
-[Placeholder: screenshot detalhes do host]
+![Hosts (lista)](screenshots/2026-04-24/03-hosts.png)
+
+[Pendente: screenshot detalhes do host (com dados reais de CPU/RAM/Disco/Rede, processos e logs)]
 
 ---
 
@@ -87,8 +88,7 @@ Notas de fala:
   - `net_w_snmp`: SNMP ativo, enriquecidos por coleta.
 - Coleta SNMP: fabricante, modelo, OS/firmware, interfaces, erros, throughput.
 
-[Placeholder: screenshot ativos de rede]  
-[Placeholder: screenshot SNMP details]
+![Ativos de rede](screenshots/2026-04-24/14-network-assets.png)
 
 ---
 
@@ -97,7 +97,7 @@ Notas de fala:
 - Filtros por host, IP, processo, aplicacao, nivel, origem e texto.
 - Correlacao por `trace_id` quando o log vier de requisicoes instrumentadas.
 
-[Placeholder: screenshot painel de logs]
+![Painel de logs](screenshots/2026-04-24/09-logs.png)
 
 ---
 
@@ -106,8 +106,7 @@ Notas de fala:
 - Drill down por servico, host, URL, metodo, status, duracao e dependencias.
 - Correlacao entre processos, logs, traces e servicos consumidos.
 
-[Placeholder: screenshot lista de traces]  
-[Placeholder: screenshot detalhe de trace]
+![Lista de traces](screenshots/2026-04-24/10-traces.png)
 
 ---
 
@@ -149,7 +148,7 @@ Licencas por modulo (entitlements), por exemplo:
 - Administrador acompanha status, interacoes e anexos.
 - Triagem inicial automatizada com IA para sugerir caminhos de resolucao.
 
-[Placeholder: screenshot tickets]
+![Tickets](screenshots/2026-04-24/12-tickets.png)
 
 ---
 
@@ -169,4 +168,3 @@ Itens planejados (visao de produto):
 
 Contato e proximos passos:
 - Workshop de 60 min para topologia e requisitos (DNS, proxy, redes, politicas).
-

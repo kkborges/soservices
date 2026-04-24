@@ -18,9 +18,9 @@
     </div>
     <form id="login-form" class="card form-card">
       <h2>Acessar plataforma</h2>
-      <label>Usuario<input name="username" value="admin" required></label>
-      <label>Senha<input type="password" name="password" value="admin" required></label>
-      <p class="muted">Tenant demo: demo_las@soservices.com.br / admin</p>
+      <label>Usuario<input name="username" autocomplete="username" placeholder="seu.usuario@empresa.com" required></label>
+      <label>Senha<input type="password" name="password" autocomplete="current-password" placeholder="sua senha" required></label>
+      <p class="muted">Use as credenciais do seu tenant.</p>
       <button class="button primary" type="submit">Entrar</button>
       <p id="login-message" class="message"></p>
     </form>

@@ -1,0 +1,6 @@
+LAS Platform - Marketing / Documentacao
+base_url=http://las.soservices.com.br
+ui=v2
+captured_at=2026-04-24T08:41:44
+
+Obs: prints gerados via Playwright headless.

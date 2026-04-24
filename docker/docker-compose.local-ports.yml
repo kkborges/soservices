@@ -1,0 +1,12 @@
+# Local dev convenience override
+# - Avoid binding privileged ports (80/443) on the workstation
+# - Keep frontend+API reachable on localhost for UI tests / screenshots
+services:
+  las-frontend:
+    ports:
+      - "8080:80"
+
+  las-api:
+    ports:
+      - "8081:8000"
+

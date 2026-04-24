@@ -3,6 +3,8 @@
 ## O que e
 O LAS e uma plataforma para monitorar infraestrutura, logs, observabilidade (OpenTelemetry) e redes (discovery/SNMP) com operacao segura e padronizada, em SaaS ou on-prem.
 
+![Visao geral (UI)](screenshots/2026-04-24/02-home.png)
+
 ## Principais modulos
 - Infra: hosts Linux/Windows, consumo de recursos e processos.
 - Logs: ingestao via agente, gateway e syslog remoto (UDP/TCP 514; 6514 reservado para TLS).
@@ -30,4 +32,3 @@ Opcoes:
 
 ## Proximo passo (piloto sugerido)
 1 gateway + 1 agente + 1 fonte de syslog + 1 aplicacao com OTel (quando aplicavel).
-
