@@ -118,6 +118,11 @@ const esc = (value) =>
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll('"', "&quot;");
+const trunc = (value, max = 160) => {
+  const text = String(value ?? "");
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 3))}...`;
+};
 const fmt = (value) => (value ? new Date(value).toLocaleString("pt-BR") : "-");
 const num = (value) => Number(value || 0).toLocaleString("pt-BR");
 const status = (value) => {
@@ -726,7 +731,7 @@ async function renderHostDetailV2(hostId, options = {}) {
             <span class="tag">${esc(host.monitoring_mode || "infra")}</span>
             <span class="status">${healthDot(host.status)} ${esc(host.status || "offline")}</span>
           </div>
-          <p class="muted">${esc(host.os_version || "")} ${host.ip ? `• ${esc(host.ip)}` : ""} ${host.agent_version ? `• agente ${esc(host.agent_version)}` : ""}</p>
+          <p class="muted">${esc(host.os_version || "")} ${host.ip ? `- ${esc(host.ip)}` : ""} ${host.agent_version ? `- agente ${esc(host.agent_version)}` : ""}</p>
           <div class="actions v2-actions">
             <button class="button ghost v2-open-props" type="button">Propriedades</button>
             <button class="button ghost v2-open-procs" type="button">Processos</button>
@@ -1129,11 +1134,102 @@ async function renderNetworkAssets() {
 }
 
 async function renderNetworkAssetDetail(assetId) {
+  if (isUiV2()) {
+    await renderNetworkAssetDetailV2(assetId);
+    return;
+  }
+  closeInspector();
   const data = await api(`/api/v1/network-assets/${assetId}/detail`);
   const asset = data.asset;
   const ports = data.ports || [];
   render(`<section class="entity-detail"><article class="detail-hero card"><div class="detail-hero-main"><p class="eyebrow">Ativo de rede</p><h2>${esc(asset.hostname || asset.ip)}</h2><p class="muted">${esc(asset.manufacturer || "-")} ${esc(asset.os_firmware || "")}</p><div class="actions"><button id="back-network" class="button ghost" type="button">Voltar para ativos</button></div></div><div class="detail-health">${healthPill(asset.status)}<small>Ultima coleta<br><strong>${fmt(asset.last_poll || asset.last_scan)}</strong></small></div></article><article class="card detail-kpis">${metricTile("IP", esc(asset.ip))}${metricTile("Tipo", esc(asset.asset_type || "-"))}${metricTile("SNMP", asset.snmp_enabled ? "ativo" : "nao")}${metricTile("SYSLOG", asset.syslog_enabled ? "habilitado" : "nao")}${metricTile("Portas", `${num(asset.ports_up)} up / ${num(asset.ports_down)} down`, `${num(asset.port_count)} total`)}</article><article class="card"><h3>Portas e interfaces SNMP</h3>${ports.length ? table(["#", "Nome", "Descricao", "Status", "Velocidade", "RX/TX", "Erros"], ports.map((port) => [num(port.port_number), esc(port.name || "-"), esc(port.description || "-"), status(port.status), `${num(port.speed_mbps)} Mbps`, `${bytes(port.rx_bytes)} / ${bytes(port.tx_bytes)}`, `${num(port.rx_errors)} / ${num(port.tx_errors)}`])) : `<p class="muted">Nenhuma porta coletada ainda. Execute Coletar SNMP no ativo após atualizar o gateway.</p>`}</article></section>`);
   $("#back-network").addEventListener("click", () => renderNetworkAssets());
+}
+
+function assetPropertiesInspector(asset) {
+  const general = {
+    hostname: asset.hostname || "-",
+    ip: asset.ip || "-",
+    tipo: asset.asset_type || "-",
+    fabricante: asset.manufacturer || "-",
+    os_firmware: asset.os_firmware || "-",
+    snmp: asset.snmp_enabled ? "ativo" : "nao",
+    syslog: asset.syslog_enabled ? "habilitado" : "nao",
+    ultima_varredura: asset.last_scan ? fmt(asset.last_scan) : "-",
+    ultima_coleta_snmp: asset.last_poll ? fmt(asset.last_poll) : "-",
+  };
+  const ports = {
+    total: asset.port_count ?? "-",
+    up: asset.ports_up ?? "-",
+    down: asset.ports_down ?? "-",
+  };
+  return `${kvTable("Geral", general)}${kvTable("Portas", ports)}`;
+}
+
+async function renderNetworkAssetDetailV2(assetId) {
+  const data = await api(`/api/v1/network-assets/${assetId}/detail`);
+  const asset = data.asset;
+  const ports = data.ports || [];
+
+  render(`
+    <section class="entity-detail v2">
+      <article class="detail-hero card v2-hero">
+        <div class="v2-hero-main">
+          <p class="eyebrow">Ativos de rede <span class="muted">/</span> ${esc(asset.hostname || asset.ip)}</p>
+          <div class="v2-title-row">
+            <h2>${esc(asset.hostname || asset.ip)}</h2>
+            <span class="tag">${esc(asset.asset_type || "ativo")}</span>
+            <span class="status">${healthDot(asset.status)} ${esc(asset.status || "offline")}</span>
+          </div>
+          <p class="muted">${esc(asset.manufacturer || "-")} ${asset.os_firmware ? `- ${esc(asset.os_firmware)}` : ""} ${asset.ip ? `- ${esc(asset.ip)}` : ""}</p>
+          <div class="actions v2-actions">
+            <button class="button ghost v2-open-props" type="button">Propriedades</button>
+            <button id="back-network" class="button ghost" type="button">Voltar</button>
+          </div>
+        </div>
+        <div class="v2-hero-kpis">
+          ${metricTile("SNMP", asset.snmp_enabled ? "ativo" : "nao", "coleta via gateway")}
+          ${metricTile("SYSLOG", asset.syslog_enabled ? "habilitado" : "nao", "listener no gateway")}
+          ${metricTile("Portas up", num(asset.ports_up), `${num(asset.port_count)} total`)}
+          ${metricTile("Ultima coleta", fmt(asset.last_poll || asset.last_scan), "poll/scan")}
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="section-header">
+          <div>
+            <h3>Portas e interfaces (SNMP)</h3>
+            <p class="muted">Status, velocidade, throughput e erros.</p>
+          </div>
+        </div>
+        ${ports.length ? table(
+          ["#", "Nome", "Descricao", "Status", "Velocidade", "RX/TX", "Erros"],
+          ports.map((port) => [
+            num(port.port_number),
+            esc(port.name || "-"),
+            esc(port.description || "-"),
+            status(port.status),
+            `${num(port.speed_mbps)} Mbps`,
+            `${bytes(port.rx_bytes)} / ${bytes(port.tx_bytes)}`,
+            `${num(port.rx_errors)} / ${num(port.tx_errors)}`,
+          ])
+        ) : `<p class="muted">Nenhuma porta coletada ainda.</p>`}
+      </article>
+    </section>
+  `);
+
+  openInspector({
+    title: asset.hostname || asset.ip || "Ativo",
+    eyebrow: "Propriedades do ativo",
+    body: assetPropertiesInspector(asset),
+  });
+
+  $("#back-network").addEventListener("click", () => renderNetworkAssets());
+  $$(".v2-open-props").forEach((button) => button.addEventListener("click", () => openInspector({
+    title: asset.hostname || asset.ip || "Ativo",
+    eyebrow: "Propriedades do ativo",
+    body: assetPropertiesInspector(asset),
+  })));
 }
 
 async function renderProcessesLegacy() {
@@ -1177,6 +1273,11 @@ async function renderServices() {
 }
 
 async function renderServiceDetail(serviceName) {
+  if (isUiV2()) {
+    await renderServiceDetailV2(serviceName);
+    return;
+  }
+  closeInspector();
   const data = await api(`/api/v1/services/detail${queryString({ name: serviceName, ...(state.filters.services || { timeframe: "24h" }) })}`);
   render(`<section class="grid"><article class="card"><div class="actions"><button id="back-services" class="button ghost" type="button">Voltar</button><button id="svc-logs" class="button ghost" type="button">Ir para logs</button><button id="svc-traces" class="button ghost" type="button">Ir para traces</button></div><h3>${esc(data.name)}</h3><div class="detail-kpis">${metricTile("Requests", num(data.requests))}${metricTile("Erros", num(data.errors))}${metricTile("Hosts", esc((data.hosts || []).join(", ") || "-"))}</div><h3>URLs acessadas</h3>${data.urls?.length ? table(["URL", "Requests"], data.urls.map((item) => [esc(item.url), num(item.requests)])) : `<p class="muted">Nenhuma URL real correlacionada a este servico.</p>`}</article><article class="card"><h3>Ultimos traces</h3>${data.traces?.length ? table(["Trace", "Nome", "Status", "Duracao"], data.traces.map((trace) => [`<button class="link-button trace-detail-trigger" data-trace-id="${esc(trace.trace_id)}" type="button">${esc(trace.trace_id)}</button>`, esc(trace.name), status(trace.status), `${num(trace.duration_ms)} ms`])) : `<p class="muted">Sem traces no periodo.</p>`}</article><article class="card"><h3>Logs correlacionados</h3>${data.logs?.length ? table(["Quando", "Nivel", "Origem", "Mensagem"], data.logs.map((log) => [fmt(log.timestamp), esc(log.level), esc(log.source || "-"), esc(log.message)])) : `<p class="muted">Sem logs correlacionados.</p>`}</article></section>`);
   $("#back-services").addEventListener("click", renderServices);
@@ -1188,6 +1289,126 @@ async function renderServiceDetail(serviceName) {
     setFilter("traces", "service", serviceName);
     loadView("traces");
   });
+  $$(".trace-detail-trigger").forEach((button) => button.addEventListener("click", () => renderTraceDetail(button.dataset.traceId)));
+}
+
+function servicePropertiesInspector(service) {
+  const general = {
+    servico: service.name || "-",
+    tecnologia: service.technology || "-",
+    monitoramento: service.monitoring_mode || "-",
+    hosts: (service.hosts || []).join(", ") || "-",
+  };
+  const counters = {
+    requests: service.requests ?? "-",
+    errors: service.errors ?? "-",
+    avg_duration_ms: service.avg_duration_ms ?? "-",
+  };
+  const urls = (service.urls || []).slice(0, 12).map((item) => `${item.url} (${item.requests})`).join("\n") || "-";
+  return `
+    ${kvTable("Geral", general)}
+    ${kvTable("Counters", counters)}
+    <article class="card"><h3>URLs (amostra)</h3><pre><code>${esc(urls)}</code></pre></article>
+  `;
+}
+
+function logInspectorBody(log) {
+  const general = {
+    timestamp: log.timestamp ? fmt(log.timestamp) : "-",
+    level: log.level || "-",
+    host: log.host_name || "-",
+    host_ip: log.host_ip || "-",
+    source: log.source || log.group || "-",
+    service: log.service || "-",
+    trace_id: log.trace_id || log.traceId || "-",
+  };
+  return `
+    ${kvTable("Geral", general)}
+    <article class="card"><h3>Mensagem</h3><pre><code>${esc(String(log.message || ""))}</code></pre></article>
+  `;
+}
+
+async function renderServiceDetailV2(serviceName) {
+  const data = await api(`/api/v1/services/detail${queryString({ name: serviceName, ...(state.filters.services || { timeframe: "24h" }) })}`);
+  render(`
+    <section class="entity-detail v2">
+      <article class="detail-hero card v2-hero">
+        <div class="v2-hero-main">
+          <p class="eyebrow">Servicos <span class="muted">/</span> ${esc(data.name)}</p>
+          <div class="v2-title-row">
+            <h2>${esc(data.name)}</h2>
+            ${data.technology ? `<span class="tag">${esc(data.technology)}</span>` : ""}
+            ${data.monitoring_mode ? `<span class="tag">${esc(data.monitoring_mode)}</span>` : ""}
+          </div>
+          <p class="muted">${esc((data.hosts || []).slice(0, 4).join(", ") || "Sem host correlacionado")}</p>
+          <div class="actions v2-actions">
+            <button class="button ghost v2-open-props" type="button">Propriedades</button>
+            <button id="svc-logs" class="button ghost" type="button">Logs</button>
+            <button id="svc-traces" class="button ghost" type="button">Traces</button>
+            <button id="back-services" class="button ghost" type="button">Voltar</button>
+          </div>
+        </div>
+        <div class="v2-hero-kpis">
+          ${metricTile("Requests", num(data.requests), "periodo")}
+          ${metricTile("Erros", num(data.errors), "periodo")}
+          ${metricTile("Latencia media", data.avg_duration_ms != null ? `${num(data.avg_duration_ms)} ms` : "-", "periodo")}
+          ${metricTile("Hosts", num((data.hosts || []).length), "correlacionados")}
+        </div>
+      </article>
+
+      <section class="grid two">
+        <article class="card">
+          <div class="section-header">
+            <div>
+              <h3>URLs acessadas</h3>
+              <p class="muted">Principais URLs vistas via traces.</p>
+            </div>
+          </div>
+          ${data.urls?.length ? table(["URL", "Requests"], data.urls.map((item) => [esc(item.url), num(item.requests)])) : `<p class="muted">Nenhuma URL real correlacionada.</p>`}
+        </article>
+        <article class="card">
+          <div class="section-header">
+            <div>
+              <h3>Ultimos traces</h3>
+              <p class="muted">Clique em um trace para drill down.</p>
+            </div>
+          </div>
+          ${data.traces?.length ? table(["Trace", "Nome", "Status", "Duracao"], data.traces.map((trace) => [`<button class="link-button trace-detail-trigger" data-trace-id="${esc(trace.trace_id)}" type="button"><span class="mono">${esc(trace.trace_id)}</span></button>`, esc(trace.name), status(trace.status), `${num(trace.duration_ms)} ms`])) : `<p class="muted">Sem traces no periodo.</p>`}
+        </article>
+      </section>
+
+      <article class="card">
+        <div class="section-header">
+          <div>
+            <h3>Logs correlacionados</h3>
+            <p class="muted">Quando existir <span class="mono">trace_id</span> nos logs, eles aparecem aqui para acelerar triagem.</p>
+          </div>
+        </div>
+        ${data.logs?.length ? table(["Quando", "Nivel", "Origem", "Mensagem"], data.logs.map((log) => [fmt(log.timestamp), esc(log.level), esc(log.source || "-"), esc(log.message)])) : `<p class="muted">Sem logs correlacionados.</p>`}
+      </article>
+    </section>
+  `);
+
+  openInspector({
+    title: data.name || "Servico",
+    eyebrow: "Propriedades do servico",
+    body: servicePropertiesInspector(data),
+  });
+
+  $("#back-services").addEventListener("click", renderServices);
+  $("#svc-logs").addEventListener("click", () => {
+    setFilter("logs", "service", serviceName);
+    loadView("logs");
+  });
+  $("#svc-traces").addEventListener("click", () => {
+    setFilter("traces", "service", serviceName);
+    loadView("traces");
+  });
+  $$(".v2-open-props").forEach((button) => button.addEventListener("click", () => openInspector({
+    title: data.name || "Servico",
+    eyebrow: "Propriedades do servico",
+    body: servicePropertiesInspector(data),
+  })));
   $$(".trace-detail-trigger").forEach((button) => button.addEventListener("click", () => renderTraceDetail(button.dataset.traceId)));
 }
 
@@ -1294,6 +1515,11 @@ function fillSyntheticTemplate(template) {
 }
 
 async function renderSyntheticDetail(testId) {
+  if (isUiV2()) {
+    await renderSyntheticDetailV2(testId);
+    return;
+  }
+  closeInspector();
   const data = await api(`/api/v1/synthetics/${testId}/detail`);
   const test = data.test || {};
   const results = data.results || [];
@@ -1369,6 +1595,144 @@ async function renderSyntheticDetail(testId) {
   });
 }
 
+function syntheticPropertiesInspector(test, baseline, timingBaseline) {
+  const meta = {
+    id: test.id || "-",
+    type: test.type || "-",
+    enabled: test.enabled ? "sim" : "nao",
+    interval_seconds: test.interval_seconds ?? "-",
+    timeout_seconds: test.timeout_seconds ?? "-",
+    url: test.url || "-",
+    alert_on_failure: test.alert_on_failure ? "sim" : "nao",
+  };
+  const base = {
+    p95_response_ms: baseline.p95_response_ms ?? "-",
+    uptime_pct: test.uptime_pct ?? "-",
+  };
+  const timing = {
+    p95_dns_ms: timingBaseline.p95_dns_ms ?? "-",
+    p95_connect_ms: timingBaseline.p95_connect_ms ?? "-",
+    p95_tls_ms: timingBaseline.p95_tls_ms ?? "-",
+    p95_ttfb_ms: timingBaseline.p95_ttfb_ms ?? "-",
+    p95_download_ms: timingBaseline.p95_download_ms ?? "-",
+    p95_total_ms: timingBaseline.p95_total_ms ?? "-",
+  };
+  return `
+    ${kvTable("Meta", meta)}
+    ${kvTable("Baseline", base)}
+    ${kvTable("Timing baseline", timing)}
+    <article class="card"><h3>Configuracao (JSON)</h3><pre><code>${esc(JSON.stringify({ assertions: test.assertions, flow_steps: test.flow_steps, headers: test.headers }, null, 2))}</code></pre></article>
+  `;
+}
+
+async function renderSyntheticDetailV2(testId) {
+  const data = await api(`/api/v1/synthetics/${testId}/detail`);
+  const test = data.test || {};
+  const results = data.results || [];
+  const baseline = data.baseline || {};
+  const timingBaseline = data.timing_baseline || {};
+  const latest = results[0] || {};
+  const latestTimings = latest.timings || {};
+  const timingRows = [
+    ["DNS", latestTimings.dns_ms, timingBaseline.p95_dns_ms],
+    ["Connect", latestTimings.connect_ms, timingBaseline.p95_connect_ms],
+    ["TLS", latestTimings.tls_ms, timingBaseline.p95_tls_ms],
+    ["TTFB", latestTimings.ttfb_ms, timingBaseline.p95_ttfb_ms],
+    ["Download", latestTimings.download_ms, timingBaseline.p95_download_ms],
+    ["Total", latestTimings.total_ms, timingBaseline.p95_total_ms],
+  ];
+
+  render(`
+    <section class="entity-detail v2">
+      <article class="detail-hero card v2-hero">
+        <div class="v2-hero-main">
+          <p class="eyebrow">Synthetics <span class="muted">/</span> ${esc(test.name || "Teste")}</p>
+          <div class="v2-title-row">
+            <h2>${esc(test.name || "Teste")}</h2>
+            <span class="tag">${esc(test.type || "-")}</span>
+            <span class="status">${healthDot(test.last_status)} ${esc(test.last_status || "unknown")}</span>
+          </div>
+          <p class="muted">${esc(test.description || "Sem descricao.")}</p>
+          <div class="actions v2-actions">
+            <button class="button ghost v2-open-props" type="button">Propriedades</button>
+            <button id="run-synthetic-detail" class="button primary" type="button">Executar agora</button>
+            <button id="back-synthetics" class="button ghost" type="button">Voltar</button>
+          </div>
+        </div>
+        <div class="v2-hero-kpis">
+          ${metricTile("Resposta", test.last_response_ms ? `${num(test.last_response_ms)} ms` : "-", "ultima")}
+          ${metricTile("Baseline p95", baseline.p95_response_ms ? `${num(baseline.p95_response_ms)} ms` : "-", "historico")}
+          ${metricTile("Uptime", `${num(test.uptime_pct)}%`, "periodo")}
+          ${metricTile("Ultima execucao", fmt(test.last_check), "check")}
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="section-header">
+          <div>
+            <h3>Timing detalhado</h3>
+            <p class="muted">DNS, connect e TLS sao medidos em preflight (best-effort). TTFB e total sao medidos durante a request.</p>
+          </div>
+        </div>
+        ${latestTimings && Object.keys(latestTimings).length ? table(["Fase", "Ultimo (ms)", "Baseline p95 (ms)"], timingRows.map(([label, last, p95]) => [esc(label), last == null ? "-" : num(last), p95 == null ? "-" : num(p95)])) : `<p class="muted">Sem timings avancados ainda. Execute o teste para gerar.</p>`}
+        ${latestTimings.bytes ? `<p class="muted">Bytes baixados: ${num(latestTimings.bytes)}</p>` : ""}
+      </article>
+
+      <article class="card">
+        <div class="section-header">
+          <div>
+            <h3>Historico de execucoes</h3>
+            <p class="muted">Disponibilidade, tempo de resposta e erros.</p>
+          </div>
+        </div>
+        ${results.length ? table(["Quando", "Status", "HTTP", "Resposta", "SSL", "Assertions", "Steps", "Erro"], results.map((result) => [
+          fmt(result.timestamp),
+          status(result.status),
+          esc(result.status_code || "-"),
+          result.response_time_ms ? `${num(result.response_time_ms)} ms` : "-",
+          result.ssl_days_remaining == null ? "-" : `${num(result.ssl_days_remaining)} dias`,
+          `${num(result.assertions_passed)} ok / ${num(result.assertions_failed)} falhas`,
+          result.steps_total == null ? "-" : `${num(result.steps_passed)} / ${num(result.steps_total)}`,
+          esc(result.error_message || "-"),
+        ])) : `<p class="muted">Ainda nao ha execucoes reais para este teste.</p>`}
+      </article>
+
+      <article class="card">
+        <div class="section-header">
+          <div>
+            <h3>Recursos (waterfall)</h3>
+            <p class="muted">Detalhamento de recursos baixados (quando aplicavel).</p>
+          </div>
+        </div>
+        ${(latest.resources || []).length ? table(["Recurso", "HTTP", "Total (ms)", "TTFB (ms)", "Bytes"], latest.resources.slice(0, 20).map((res) => [
+          `<span class="mono">${esc(res.url || "-")}</span>`,
+          esc(res.status_code || "-"),
+          res.total_ms == null ? "-" : num(res.total_ms),
+          res.ttfb_ms == null ? "-" : num(res.ttfb_ms),
+          res.bytes == null ? "-" : num(res.bytes),
+        ])) : `<p class="muted">Nenhum recurso coletado.</p>`}
+      </article>
+    </section>
+  `);
+
+  openInspector({
+    title: test.name || "Teste",
+    eyebrow: "Propriedades do teste",
+    body: syntheticPropertiesInspector(test, baseline, timingBaseline),
+  });
+
+  $("#back-synthetics").addEventListener("click", renderSynthetics);
+  $("#run-synthetic-detail").addEventListener("click", async () => {
+    await api(`/api/v1/synthetics/${testId}/run`, { method: "POST" });
+    await renderSyntheticDetailV2(testId);
+  });
+  $$(".v2-open-props").forEach((button) => button.addEventListener("click", () => openInspector({
+    title: test.name || "Teste",
+    eyebrow: "Propriedades do teste",
+    body: syntheticPropertiesInspector(test, baseline, timingBaseline),
+  })));
+}
+
 async function renderIncidents() {
   const items = await api(`/api/v1/incidents${queryString(state.filters.incidents || { timeframe: "30d" })}`);
   render(`<article class="card"><h3>Problemas e incidentes</h3>${filterPanel("incidents", [{ name: "host", label: "Host/entidade" }, { name: "q", label: "Contexto" }, { name: "status", label: "Status" }, { name: "severity", label: "Severidade" }])}${items.length ? table(["ID", "Descricao", "Status", "Severidade", "Entidade", "Metrica", "Duracao"], items.map((incident) => [`<span class="mono">${esc(incident.id.slice(0, 8))}</span>`, `<strong>${esc(incident.name)}</strong><br><small>${esc(incident.description || "-")}</small>`, status(incident.status), esc(incident.severity || "-"), esc(incident.entity_name || incident.entity_type || "-"), esc(incident.metric || "-"), incidentDuration(incident)])) : `<p class="muted">Nenhum incidente real registrado pelo Alert Engine.</p>`}</article>`);
@@ -1406,7 +1770,67 @@ async function renderLogs() {
     api(`/api/v1/logs${queryString(params)}`),
     api("/api/v1/logs/processing-config"),
   ]);
-  render(`<section class="grid"><article class="card"><div class="section-header"><div><h3>Logs reais</h3><p class="muted">Exibindo inicialmente 20 linhas. Use os filtros para pesquisar por host, IP, servico, processo, source, nivel e contexto.</p></div><button id="open-log-monitor" class="button ghost" type="button">Criar metrica a partir da busca</button></div>${filterPanel("logs", [{ name: "host", label: "Host" }, { name: "ip", label: "IP" }, { name: "source", label: "Source" }, { name: "level", label: "Level" }, { name: "service", label: "Servico/processo" }, { name: "group", label: "Tipo/tecnologia" }, { name: "q", label: "Contexto mensagem" }])}${items.length ? table(["Quando", "Nivel", "Host", "Origem", "Servico", "Mensagem"], items.map((log) => [fmt(log.timestamp), esc(log.level), `${esc(log.host_name || "-")}<br><small>${esc(log.host_ip || "")}</small>`, esc(log.source || log.group || "-"), esc(log.service || "-"), esc(log.message)])) : `<p class="muted">Nenhum log encontrado para os filtros aplicados.</p>`}</article><article class="card"><h3>Processamento de niveis</h3><p class="muted">${esc(config.note || "")}</p><form id="log-processing-form" class="feature-grid">${(config.available_levels || []).map((level) => `<label class="check-row"><input type="checkbox" name="levels" value="${esc(level)}" ${(config.levels || []).includes(level) ? "checked" : ""}>${esc(level)}</label>`).join("")}</form><div class="actions" style="margin-top:14px"><button id="save-log-processing" class="button primary" type="button">Salvar niveis processados</button></div><p id="log-processing-message" class="message"></p></article><article id="log-monitor-card" class="card hidden"><h3>Nova metrica baseada em logs</h3><p class="muted">A pesquisa atual vira um widget de dashboard e, opcionalmente, uma regra de alerta por contagem.</p><form id="log-monitor-form" class="form-grid"><label>Nome<input name="name" required placeholder="Erro login portal"></label><label>Visualizacao<select name="viz_type"><option value="timeseries">Linha</option><option value="area">Area</option><option value="table">Tabela</option><option value="honeycomb">Honeycomb</option><option value="gauge">Gauge</option></select></label><label>Threshold count<input name="threshold_count" type="number" placeholder="10"></label><label>Severidade<select name="severity"><option value="medium">media</option><option value="high">alta</option><option value="critical">critica</option><option value="low">baixa</option></select></label><label><input type="checkbox" name="create_alert" style="width:auto; margin-right:8px">Criar alerta/incidente</label></form><div class="actions" style="margin-top:14px"><button id="save-log-monitor" class="button primary" type="button">Criar metrica</button></div><p id="log-monitor-message" class="message"></p></article></section>`);
+  const rows = items.map((log, index) => {
+    const message = isUiV2()
+      ? `<button class="link-button log-inspect" data-idx="${index}" type="button">${esc(trunc(log.message, 160))}</button>`
+      : esc(log.message);
+    return [
+      fmt(log.timestamp),
+      esc(log.level),
+      `${esc(log.host_name || "-")}<br><small>${esc(log.host_ip || "")}</small>`,
+      esc(log.source || log.group || "-"),
+      esc(log.service || "-"),
+      message,
+    ];
+  });
+
+  render(`
+    <section class="grid">
+      <article class="card">
+        <div class="section-header">
+          <div>
+            <h3>Logs reais</h3>
+            <p class="muted">Exibindo inicialmente 20 linhas. Use os filtros para pesquisar por host, IP, servico, processo, source, nivel e contexto.</p>
+          </div>
+          <button id="open-log-monitor" class="button ghost" type="button">Criar metrica a partir da busca</button>
+        </div>
+        ${filterPanel("logs", [
+          { name: "host", label: "Host" },
+          { name: "ip", label: "IP" },
+          { name: "source", label: "Source" },
+          { name: "level", label: "Level" },
+          { name: "service", label: "Servico/processo" },
+          { name: "group", label: "Tipo/tecnologia" },
+          { name: "q", label: "Contexto mensagem" },
+        ])}
+        ${items.length ? table(["Quando", "Nivel", "Host", "Origem", "Servico", "Mensagem"], rows) : `<p class="muted">Nenhum log encontrado para os filtros aplicados.</p>`}
+      </article>
+
+      <article class="card">
+        <h3>Processamento de niveis</h3>
+        <p class="muted">${esc(config.note || "")}</p>
+        <form id="log-processing-form" class="feature-grid">
+          ${(config.available_levels || []).map((level) => `<label class="check-row"><input type="checkbox" name="levels" value="${esc(level)}" ${(config.levels || []).includes(level) ? "checked" : ""}>${esc(level)}</label>`).join("")}
+        </form>
+        <div class="actions" style="margin-top:14px"><button id="save-log-processing" class="button primary" type="button">Salvar niveis processados</button></div>
+        <p id="log-processing-message" class="message"></p>
+      </article>
+
+      <article id="log-monitor-card" class="card hidden">
+        <h3>Nova metrica baseada em logs</h3>
+        <p class="muted">A pesquisa atual vira um widget de dashboard e, opcionalmente, uma regra de alerta por contagem.</p>
+        <form id="log-monitor-form" class="form-grid">
+          <label>Nome<input name="name" required placeholder="Erro login portal"></label>
+          <label>Visualizacao<select name="viz_type"><option value="timeseries">Linha</option><option value="area">Area</option><option value="table">Tabela</option><option value="honeycomb">Honeycomb</option><option value="gauge">Gauge</option></select></label>
+          <label>Threshold count<input name="threshold_count" type="number" placeholder="10"></label>
+          <label>Severidade<select name="severity"><option value="medium">media</option><option value="high">alta</option><option value="critical">critica</option><option value="low">baixa</option></select></label>
+          <label><input type="checkbox" name="create_alert" style="width:auto; margin-right:8px">Criar alerta/incidente</label>
+        </form>
+        <div class="actions" style="margin-top:14px"><button id="save-log-monitor" class="button primary" type="button">Criar metrica</button></div>
+        <p id="log-monitor-message" class="message"></p>
+      </article>
+    </section>
+  `);
   bindFilters("logs", renderLogs);
   $("#open-log-monitor").addEventListener("click", () => $("#log-monitor-card").classList.toggle("hidden"));
   $("#save-log-processing").addEventListener("click", async () => {
@@ -1446,6 +1870,19 @@ async function renderLogs() {
       $("#log-monitor-message").textContent = error.message;
     }
   });
+
+  if (isUiV2()) {
+    $$(".log-inspect").forEach((button) => button.addEventListener("click", () => {
+      const idx = Number(button.dataset.idx || 0);
+      const log = items[idx];
+      if (!log) return;
+      openInspector({
+        title: "Log",
+        eyebrow: "Detalhe do log",
+        body: logInspectorBody(log),
+      });
+    }));
+  }
 }
 
 async function renderTracesLegacy() {
@@ -1455,6 +1892,11 @@ async function renderTracesLegacy() {
 }
 
 async function renderTraceDetail(traceId) {
+  if (isUiV2()) {
+    await renderTraceDetailV2(traceId);
+    return;
+  }
+  closeInspector();
   const data = await api(`/api/v1/traces/${encodeURIComponent(traceId)}/detail`);
   const trace = data.trace || {};
   const attrs = { ...(trace.resource || {}), ...(trace.attributes || {}) };
@@ -1464,6 +1906,137 @@ async function renderTraceDetail(traceId) {
     setFilter("logs", "q", traceId);
     loadView("logs");
   });
+}
+
+function tracePropertiesInspector(trace) {
+  const general = {
+    trace_id: trace.trace_id || "-",
+    service: trace.service || "-",
+    host: trace.host_name || "-",
+    status: trace.status || "-",
+    duration_ms: trace.duration_ms ?? "-",
+    http: `${trace.method || "-"} ${trace.response_code || trace.status_code || "-"}`,
+    url: trace.url || trace.name || "-",
+    kind: trace.kind || "-",
+  };
+  const attrs = { ...(trace.resource || {}), ...(trace.attributes || {}) };
+  return `${kvTable("Geral", general)}${kvTable("Atributos e resource", attrs)}`;
+}
+
+async function renderTraceDetailV2(traceId) {
+  const data = await api(`/api/v1/traces/${encodeURIComponent(traceId)}/detail`);
+  const trace = data.trace || {};
+  render(`
+    <section class="entity-detail v2">
+      <article class="detail-hero card v2-hero">
+        <div class="v2-hero-main">
+          <p class="eyebrow">Traces <span class="muted">/</span> ${esc(trace.trace_id || traceId)}</p>
+          <div class="v2-title-row">
+            <h2>Trace</h2>
+            <span class="tag">${esc(trace.service || "-")}</span>
+            <span class="status">${healthDot(trace.status)} ${esc(trace.status || "-")}</span>
+          </div>
+          <p class="muted">${esc(trace.url || trace.name || "-")}</p>
+          <div class="actions v2-actions">
+            <button class="button ghost v2-open-props" type="button">Propriedades</button>
+            <button id="trace-logs" class="button ghost" type="button">Logs</button>
+            <button id="back-traces" class="button ghost" type="button">Voltar</button>
+          </div>
+        </div>
+        <div class="v2-hero-kpis">
+          ${metricTile("Duracao", trace.duration_ms != null ? `${num(trace.duration_ms)} ms` : "-", "trace raiz")}
+          ${metricTile("HTTP", `${esc(trace.method || "-")} ${esc(trace.response_code || trace.status_code || "-")}`, "request")}
+          ${metricTile("Host", esc(trace.host_name || "-"), "origem")}
+          ${metricTile("Kind", esc(trace.kind || "-"), "span kind")}
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="section-header">
+          <div>
+            <h3>Flow da requisicao</h3>
+            <p class="muted">Cadeia de spans (pai/filho) com servicos e duracoes.</p>
+          </div>
+        </div>
+        ${data.flow?.length ? table(
+          ["Span", "Pai", "Servico", "Metodo/URI", "Host", "Status", "Duracao"],
+          data.flow.map((span) => [
+            `<span class="mono">${esc(span.span_id || "-")}</span>`,
+            `<span class="mono">${esc(span.parent_span_id || "-")}</span>`,
+            esc(span.service || "-"),
+            `<strong>${esc(span.method || span.kind || "-")}</strong><br><small>${esc(span.url || span.name || "-")}</small>`,
+            esc(span.host_name || "-"),
+            status(span.status),
+            `${num(span.duration_ms)} ms`,
+          ])
+        ) : `<p class="muted">Sem spans suficientes para montar o flow.</p>`}
+      </article>
+
+      <section class="grid two">
+        <article class="card">
+          <div class="section-header">
+            <div>
+              <h3>Spans detalhados</h3>
+              <p class="muted">Atributos e eventos por span.</p>
+            </div>
+          </div>
+          ${data.spans?.length ? table(
+            ["Span", "Servico", "Modulo/metodo", "Status", "Duracao", "Atributos"],
+            data.spans.map((span) => [
+              `<span class="mono">${esc(span.span_id || "-")}</span>`,
+              esc(span.service || "-"),
+              esc(span.name || "-"),
+              status(span.status),
+              `${num(span.duration_ms)} ms`,
+              `<details><summary>Ver JSON</summary>${jsonBlock({ attributes: span.attributes, events: span.events })}</details>`,
+            ])
+          ) : `<p class="muted">Sem spans detalhados alem do trace raiz.</p>`}
+        </article>
+        <article class="card">
+          <div class="section-header">
+            <div>
+              <h3>Logs do trace</h3>
+              <p class="muted">Logs correlacionados pelo trace_id.</p>
+            </div>
+          </div>
+          ${data.logs?.length ? table(
+            ["Quando", "Nivel", "Host/Servico", "Mensagem"],
+            data.logs.map((log) => [fmt(log.timestamp), esc(log.level), esc(log.host_name || log.service || "-"), esc(log.message)])
+          ) : `<p class="muted">Nenhum log com este trace_id.</p>`}
+        </article>
+      </section>
+
+      <article class="card">
+        <div class="section-header">
+          <div>
+            <h3>Eventos RUM correlacionados</h3>
+            <p class="muted">Quando RUM estiver ativo, eventos podem correlacionar por trace_id.</p>
+          </div>
+        </div>
+        ${data.rum_events?.length ? table(
+          ["Quando", "Aplicacao", "Tipo", "Nome", "Duracao"],
+          data.rum_events.map((event) => [fmt(event.timestamp), esc(event.application || "-"), esc(event.event_type), esc(event.name || event.url || "-"), `${num(event.duration_ms)} ms`])
+        ) : `<p class="muted">Nenhum evento RUM com este trace_id.</p>`}
+      </article>
+    </section>
+  `);
+
+  openInspector({
+    title: trace.trace_id || traceId,
+    eyebrow: "Propriedades do trace",
+    body: tracePropertiesInspector(trace),
+  });
+
+  $("#back-traces").addEventListener("click", renderTraces);
+  $("#trace-logs").addEventListener("click", () => {
+    setFilter("logs", "q", traceId);
+    loadView("logs");
+  });
+  $$(".v2-open-props").forEach((button) => button.addEventListener("click", () => openInspector({
+    title: trace.trace_id || traceId,
+    eyebrow: "Propriedades do trace",
+    body: tracePropertiesInspector(trace),
+  })));
 }
 
 async function renderTraces() {
@@ -1493,6 +2066,11 @@ async function renderDashboards() {
 }
 
 async function renderDashboardDetail(dashboardId) {
+  if (isUiV2()) {
+    await renderDashboardDetailV2(dashboardId);
+    return;
+  }
+  closeInspector();
   const data = await api(`/api/v1/dashboards/${encodeURIComponent(dashboardId)}/detail`);
   render(`<section class="grid"><article class="card"><div class="actions"><button id="back-dashboards" class="button ghost" type="button">Voltar</button></div><h3>${esc(data.name)}</h3><p class="muted">${esc(data.description || "-")}</p><div class="detail-kpis">${metricTile("Categoria", esc(data.category || "-"))}${metricTile("Widgets", num((data.widgets || []).length))}${metricTile("Padrao", data.is_system ? "sim" : "nao")}</div></article><section class="grid cards">${(data.widgets || []).map((widget) => `<article class="card dashboard-widget"><span class="eyebrow">${esc(widget.viz_type)}</span><h3>${esc(widget.title)}</h3><p class="muted">${esc(widget.metric || widget.query || "-")}</p><div class="tag">${esc(widget.aggregation || "avg")}${widget.group_by ? ` por ${esc(widget.group_by)}` : ""}</div></article>`).join("") || `<article class="card"><p class="muted">Sem widgets ainda.</p></article>`}</section>${!data.is_system ? `<article class="card"><h3>Novo widget</h3><form id="widget-form" class="form-grid"><label>Titulo<input name="title" required></label><label>Visual<select name="viz_type"><option value="timeseries">Linha</option><option value="area">Area</option><option value="table">Tabela</option><option value="honeycomb">Honeycomb</option><option value="gauge">Gauge</option><option value="bar">Barra</option><option value="topology">Topologia</option></select></label><label>Metrica<input name="metric" placeholder="host.cpu_usage"></label><label>Agregacao<select name="aggregation"><option>avg</option><option>sum</option><option>max</option><option>min</option><option>count</option><option>p95</option></select></label><label>Entidade<input name="entity_type" placeholder="host|service|database|messaging"></label><label>Group by<input name="group_by" placeholder="host, service, level"></label><label style="grid-column:1/-1">Query<textarea name="query" placeholder="Opcional: query de logs/metrica"></textarea></label></form><button id="save-widget" class="button primary" type="button">Adicionar widget</button><p id="widget-message" class="message"></p></article>` : ""}</section>`);
   $("#back-dashboards").addEventListener("click", renderDashboards);
@@ -1501,6 +2079,96 @@ async function renderDashboardDetail(dashboardId) {
     try {
       await api(`/api/v1/dashboards/${encodeURIComponent(dashboardId)}/widgets`, { method: "POST", body: JSON.stringify(payload) });
       await renderDashboardDetail(dashboardId);
+    } catch (error) {
+      $("#widget-message").textContent = error.message;
+    }
+  });
+}
+
+function dashboardPropertiesInspector(dashboard) {
+  const meta = {
+    id: dashboard.id || "-",
+    categoria: dashboard.category || "-",
+    tipo: dashboard.is_system ? "padrao" : "custom",
+    time_range: dashboard.time_range || "-",
+    widgets: (dashboard.widgets || []).length,
+  };
+  return `${kvTable("Meta", meta)}`;
+}
+
+async function renderDashboardDetailV2(dashboardId) {
+  const data = await api(`/api/v1/dashboards/${encodeURIComponent(dashboardId)}/detail`);
+  render(`
+    <section class="entity-detail v2">
+      <article class="detail-hero card v2-hero">
+        <div class="v2-hero-main">
+          <p class="eyebrow">Dashboards <span class="muted">/</span> ${esc(data.name)}</p>
+          <div class="v2-title-row">
+            <h2>${esc(data.name)}</h2>
+            <span class="tag">${esc(data.category || "-")}</span>
+            <span class="tag">${data.is_system ? "padrao" : "custom"}</span>
+          </div>
+          <p class="muted">${esc(data.description || "-")}</p>
+          <div class="actions v2-actions">
+            <button class="button ghost v2-open-props" type="button">Propriedades</button>
+            <button id="back-dashboards" class="button ghost" type="button">Voltar</button>
+          </div>
+        </div>
+        <div class="v2-hero-kpis">
+          ${metricTile("Widgets", num((data.widgets || []).length), "no dashboard")}
+          ${metricTile("Time range", esc(data.time_range || "-"), "padrao")}
+          ${metricTile("Publico", data.is_public ? "sim" : "nao", "tenant")}
+          ${metricTile("Sistema", data.is_system ? "sim" : "nao", "padrao")}
+        </div>
+      </article>
+
+      <section class="grid cards">
+        ${(data.widgets || []).map((widget) => `
+          <article class="card dashboard-widget">
+            <span class="eyebrow">${esc(widget.viz_type)}</span>
+            <h3>${esc(widget.title)}</h3>
+            <p class="muted">${esc(widget.metric || widget.query || "-")}</p>
+            <div class="tag">${esc(widget.aggregation || "avg")}${widget.group_by ? ` por ${esc(widget.group_by)}` : ""}</div>
+          </article>
+        `).join("") || `<article class="card"><p class="muted">Sem widgets ainda.</p></article>`}
+      </section>
+
+      ${!data.is_system ? `
+        <article class="card">
+          <h3>Novo widget</h3>
+          <form id="widget-form" class="form-grid">
+            <label>Titulo<input name="title" required></label>
+            <label>Visual<select name="viz_type"><option value="timeseries">Linha</option><option value="area">Area</option><option value="table">Tabela</option><option value="honeycomb">Honeycomb</option><option value="gauge">Gauge</option><option value="bar">Barra</option><option value="topology">Topologia</option></select></label>
+            <label>Metrica<input name="metric" placeholder="host.cpu_usage"></label>
+            <label>Agregacao<select name="aggregation"><option>avg</option><option>sum</option><option>max</option><option>min</option><option>count</option><option>p95</option></select></label>
+            <label>Entidade<input name="entity_type" placeholder="host|service|database|messaging"></label>
+            <label>Group by<input name="group_by" placeholder="host, service, level"></label>
+            <label style="grid-column:1/-1">Query<textarea name="query" placeholder="Opcional: query de logs/metrica"></textarea></label>
+          </form>
+          <button id="save-widget" class="button primary" type="button">Adicionar widget</button>
+          <p id="widget-message" class="message"></p>
+        </article>
+      ` : ""}
+    </section>
+  `);
+
+  openInspector({
+    title: data.name || "Dashboard",
+    eyebrow: "Propriedades do dashboard",
+    body: dashboardPropertiesInspector(data),
+  });
+
+  $("#back-dashboards").addEventListener("click", renderDashboards);
+  $$(".v2-open-props").forEach((button) => button.addEventListener("click", () => openInspector({
+    title: data.name || "Dashboard",
+    eyebrow: "Propriedades do dashboard",
+    body: dashboardPropertiesInspector(data),
+  })));
+  $("#save-widget")?.addEventListener("click", async () => {
+    const payload = Object.fromEntries(new FormData($("#widget-form")).entries());
+    try {
+      await api(`/api/v1/dashboards/${encodeURIComponent(dashboardId)}/widgets`, { method: "POST", body: JSON.stringify(payload) });
+      await renderDashboardDetailV2(dashboardId);
     } catch (error) {
       $("#widget-message").textContent = error.message;
     }
@@ -1566,6 +2234,11 @@ async function renderTickets() {
 }
 
 async function renderTicketDetail(ticketId) {
+  if (isUiV2()) {
+    await renderTicketDetailV2(ticketId);
+    return;
+  }
+  closeInspector();
   const data = await api(`/api/v1/tickets/${ticketId}`);
   const ticket = data.ticket;
   render(`<section class="grid"><article class="card"><div class="actions"><button id="back-tickets" class="button ghost" type="button">Voltar</button></div><h3>${esc(ticket.title)}</h3><div class="detail-kpis">${metricTile("Status", esc(ticket.status))}${metricTile("Severidade", esc(ticket.severity))}${metricTile("Servico", esc(ticket.service_name || "-"))}${metricTile("IA", esc(ticket.ai_status || "-"))}</div><p>${esc(ticket.description)}</p></article><article class="card"><h3>Analise IA</h3><p><strong>Resumo:</strong> ${esc(ticket.ai_summary || "Aguardando analise.")}</p><p><strong>Causa suspeita:</strong> ${esc(ticket.ai_suspected_cause || "-")}</p><p><strong>Acoes recomendadas:</strong> ${esc(ticket.ai_recommended_actions || "-")}</p><p class="muted">Confianca: ${num(ticket.ai_confidence)}%</p></article><article class="card"><h3>Interacoes</h3>${data.messages?.length ? table(["Quando", "Autor", "Mensagem"], data.messages.map((msg) => [fmt(msg.created_at), esc(msg.author_role), esc(msg.message)])) : `<p class="muted">Sem interacoes.</p>`}<form id="ticket-reply-form" class="form-grid" style="margin-top:14px"><label>Status<select name="status"><option value="">manter</option><option value="in_progress">em andamento</option><option value="waiting_customer">aguardando cliente</option><option value="resolved">resolvido</option><option value="closed">fechado</option></select></label><label style="grid-column:1/-1">Resposta<textarea name="message" required></textarea></label></form><button id="send-ticket-reply" class="button primary" type="button">Enviar interacao</button><p id="ticket-detail-message" class="message"></p></article></section>`);
@@ -1575,6 +2248,116 @@ async function renderTicketDetail(ticketId) {
     try {
       await api(`/api/v1/tickets/${ticketId}/reply`, { method: "POST", body: JSON.stringify(form) });
       await renderTicketDetail(ticketId);
+    } catch (error) {
+      $("#ticket-detail-message").textContent = error.message;
+    }
+  });
+}
+
+function ticketPropertiesInspector(ticket) {
+  const meta = {
+    id: ticket.id || "-",
+    status: ticket.status || "-",
+    severidade: ticket.severity || "-",
+    categoria: ticket.category || "-",
+    servico: ticket.service_name || "-",
+    ia_status: ticket.ai_status || "-",
+    criado_em: ticket.created_at ? fmt(ticket.created_at) : "-",
+    atualizado_em: ticket.updated_at ? fmt(ticket.updated_at) : "-",
+  };
+  const attachments = (ticket.attachments || []).map((a) => a.name || a.path).filter(Boolean);
+  return `
+    ${kvTable("Meta", meta)}
+    <article class="card"><h3>Anexos (referencias)</h3>${attachments.length ? `<pre><code>${esc(attachments.join("\n"))}</code></pre>` : `<p class="muted">Nenhum anexo referenciado.</p>`}</article>
+  `;
+}
+
+async function renderTicketDetailV2(ticketId) {
+  const data = await api(`/api/v1/tickets/${ticketId}`);
+  const ticket = data.ticket;
+  render(`
+    <section class="entity-detail v2">
+      <article class="detail-hero card v2-hero">
+        <div class="v2-hero-main">
+          <p class="eyebrow">Tickets <span class="muted">/</span> ${esc(ticket.title)}</p>
+          <div class="v2-title-row">
+            <h2>${esc(ticket.title)}</h2>
+            <span class="tag">${esc(ticket.severity || "-")}</span>
+            <span class="status">${healthDot(ticket.status)} ${esc(ticket.status || "-")}</span>
+          </div>
+          <p class="muted">${esc(ticket.service_name || "Sem servico informado")}</p>
+          <div class="actions v2-actions">
+            <button class="button ghost v2-open-props" type="button">Propriedades</button>
+            <button id="back-tickets" class="button ghost" type="button">Voltar</button>
+          </div>
+        </div>
+        <div class="v2-hero-kpis">
+          ${metricTile("IA", esc(ticket.ai_status || "-"), "triagem")}
+          ${metricTile("Confianca", ticket.ai_confidence != null ? `${num(ticket.ai_confidence)}%` : "-", "IA")}
+          ${metricTile("Criado", ticket.created_at ? fmt(ticket.created_at) : "-", "data")}
+          ${metricTile("Atualizado", ticket.updated_at ? fmt(ticket.updated_at) : "-", "data")}
+        </div>
+      </article>
+
+      <section class="grid two">
+        <article class="card">
+          <div class="section-header">
+            <div>
+              <h3>Descricao</h3>
+              <p class="muted">Impacto, horarios e contexto do problema.</p>
+            </div>
+          </div>
+          <p>${esc(ticket.description || "-")}</p>
+          ${ticket.log_collection_notes ? `<article class="card" style="margin-top:14px"><h3>Logs / procedimentos</h3><pre><code>${esc(ticket.log_collection_notes)}</code></pre></article>` : ""}
+        </article>
+        <article class="card">
+          <div class="section-header">
+            <div>
+              <h3>Analise IA</h3>
+              <p class="muted">Triagem automatica antes da tratativa humana.</p>
+            </div>
+          </div>
+          <p><strong>Resumo:</strong> ${esc(ticket.ai_summary || "Aguardando analise.")}</p>
+          <p><strong>Causa suspeita:</strong> ${esc(ticket.ai_suspected_cause || "-")}</p>
+          <p><strong>Acoes recomendadas:</strong> ${esc(ticket.ai_recommended_actions || "-")}</p>
+        </article>
+      </section>
+
+      <article class="card">
+        <div class="section-header">
+          <div>
+            <h3>Interacoes</h3>
+            <p class="muted">Historico do atendimento.</p>
+          </div>
+        </div>
+        ${data.messages?.length ? table(["Quando", "Autor", "Mensagem"], data.messages.map((msg) => [fmt(msg.created_at), esc(msg.author_role), esc(msg.message)])) : `<p class="muted">Sem interacoes.</p>`}
+        <form id="ticket-reply-form" class="form-grid" style="margin-top:14px">
+          <label>Status<select name="status"><option value="">manter</option><option value="in_progress">em andamento</option><option value="waiting_customer">aguardando cliente</option><option value="resolved">resolvido</option><option value="closed">fechado</option></select></label>
+          <label style="grid-column:1/-1">Resposta<textarea name="message" required></textarea></label>
+        </form>
+        <button id="send-ticket-reply" class="button primary" type="button">Enviar interacao</button>
+        <p id="ticket-detail-message" class="message"></p>
+      </article>
+    </section>
+  `);
+
+  openInspector({
+    title: ticket.title || "Ticket",
+    eyebrow: "Propriedades do ticket",
+    body: ticketPropertiesInspector(ticket),
+  });
+
+  $("#back-tickets").addEventListener("click", renderTickets);
+  $$(".v2-open-props").forEach((button) => button.addEventListener("click", () => openInspector({
+    title: ticket.title || "Ticket",
+    eyebrow: "Propriedades do ticket",
+    body: ticketPropertiesInspector(ticket),
+  })));
+  $("#send-ticket-reply").addEventListener("click", async () => {
+    const form = Object.fromEntries(new FormData($("#ticket-reply-form")).entries());
+    try {
+      await api(`/api/v1/tickets/${ticketId}/reply`, { method: "POST", body: JSON.stringify(form) });
+      await renderTicketDetailV2(ticketId);
     } catch (error) {
       $("#ticket-detail-message").textContent = error.message;
     }
@@ -1678,7 +2461,7 @@ async function renderIntegrations() {
     const extension = detail.extension || {};
     const instances = detail.instances || [];
     $("#extension-modal-title").textContent = extension.name || slug;
-    $("#extension-modal-subtitle").textContent = `${extension.slug || slug} • ${extension.category || "-"}`;
+    $("#extension-modal-subtitle").textContent = `${extension.slug || slug} - ${extension.category || "-"}`;
     $("#extension-modal-body").innerHTML = `
       <div class="grid two">
         <article class="card">

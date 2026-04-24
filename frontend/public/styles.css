@@ -506,6 +506,30 @@ body[data-ui="v2"] .metric-tile {
     linear-gradient(180deg, rgba(255,255,255,.065), rgba(255,255,255,.02));
 }
 
+body[data-ui="v2"] .table-wrap {
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 18px;
+  background: rgba(255,255,255,.02);
+}
+body[data-ui="v2"] table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+body[data-ui="v2"] th, body[data-ui="v2"] td {
+  border-bottom-color: rgba(255,255,255,.06);
+  padding: 14px 12px;
+}
+body[data-ui="v2"] thead th {
+  position: sticky;
+  top: 0;
+  background: rgba(6, 12, 22, .92);
+  backdrop-filter: blur(12px);
+  z-index: 2;
+}
+body[data-ui="v2"] tbody tr:hover td {
+  background: rgba(255,255,255,.035);
+}
+
 body[data-ui="v2"] select {
   appearance: none;
   background-image:
