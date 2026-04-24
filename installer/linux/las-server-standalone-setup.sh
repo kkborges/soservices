@@ -16,6 +16,10 @@ set -euo pipefail
 #
 #   sudo ./las-server-standalone-setup.sh status --install-dir /srv/las-plataforma/standalone
 #   sudo ./las-server-standalone-setup.sh uninstall --install-dir /srv/las-plataforma/standalone --purge
+#
+# Observacao (mTLS + Caddy/Nginx):
+# - O instalador gera a CA e o certificado do servidor em `--mtls-dir` (padrao: /etc/las/mtls)
+# - CA: `/etc/las/mtls/ca.pem` (e alias `/etc/las/mtls/mtls-ca.pem`)
 
 SCRIPT_NAME="$(basename "$0")"
 
@@ -33,6 +37,7 @@ Opcoes (install):
   --listen-host <ip>                 (default: 0.0.0.0)
   --listen-port <port>               (default: 8000)
   --env-file <path>                  (default: /etc/las/server.env)
+  --mtls-dir <path>                  (default: /etc/las/mtls)
 
   Postgres:
     --postgres existing|local         (default: existing)
@@ -118,6 +123,7 @@ write_meta() {
   local vpy="$4"
   local listen_host="$5"
   local listen_port="$6"
+  local mtls_dir="$7"
   local meta
   meta="$(meta_path_for_install "$install_dir")"
   umask 027
@@ -127,6 +133,7 @@ PYTHON_BIN=${python_bin}
 VENV_PY=${vpy}
 LISTEN_HOST=${listen_host}
 LISTEN_PORT=${listen_port}
+MTLS_DIR=${mtls_dir}
 EOF
   chmod 640 "$meta" || true
 }
@@ -156,6 +163,7 @@ write_env_file() {
   local redis_db="${11}"
   local redis_pass="${12}"
   local otel_endpoint="${13}"
+  local mtls_dir="${14}"
 
   mkdir -p "$(dirname "$env_file")"
   # Restrict permissions: secrets (db passwords) may exist here.
@@ -181,10 +189,34 @@ REDIS_PASSWORD=${redis_pass}
 
 # Optional OTel exporter (para self-observability / exports)
 OTEL_EXPORTER_OTLP_ENDPOINT=${otel_endpoint}
+
+# mTLS material storage (CA, certs)
+MTLS_STORAGE_DIR=${mtls_dir}
 EOF
 
   chmod 640 "$env_file"
   echo "[LAS Server] Env gravado em: $env_file"
+}
+
+ensure_mtls_material() {
+  local install_dir="$1"
+  local vpy="$2"
+  local mtls_dir="$3"
+
+  mkdir -p "$mtls_dir"
+
+  pushd "$install_dir/backend" >/dev/null
+  # Generate CA + API server certificate in a deterministic location for reverse proxies (Caddy/Nginx).
+  MTLS_STORAGE_DIR="$mtls_dir" "$vpy" -c "from app.services.mtls_service import issue_api_server_certificate; issue_api_server_certificate(); print('mtls ok')"
+  popd >/dev/null
+
+  # Compatibility alias used in some guides/configs.
+  if [[ -f "$mtls_dir/ca.pem" && ! -f "$mtls_dir/mtls-ca.pem" ]]; then
+    cp "$mtls_dir/ca.pem" "$mtls_dir/mtls-ca.pem"
+  fi
+
+  chmod 644 "$mtls_dir/ca.pem" "$mtls_dir/mtls-ca.pem" "$mtls_dir/api-server.cert.pem" 2>/dev/null || true
+  chmod 600 "$mtls_dir/ca.key.pem" "$mtls_dir/api-server.key.pem" 2>/dev/null || true
 }
 
 units_present() {
@@ -209,12 +241,17 @@ repair_units_if_possible() {
   env_file="$(read_meta_value "$meta" "ENV_FILE")"
   local vpy
   vpy="$(read_meta_value "$meta" "VENV_PY")"
+  local mtls_dir
+  mtls_dir="$(read_meta_value "$meta" "MTLS_DIR")"
 
   if [[ -z "$env_file" ]]; then
     env_file="/etc/las/server.env"
   fi
   if [[ -z "$vpy" ]]; then
     vpy="$install_dir/venv/bin/python"
+  fi
+  if [[ -z "$mtls_dir" ]]; then
+    mtls_dir="/etc/las/mtls"
   fi
 
   if [[ ! -f "$env_file" ]]; then
@@ -238,6 +275,9 @@ repair_units_if_possible() {
   systemd_unit_beat "$install_dir" "$env_file" "$vpy"
   systemctl daemon-reload
   systemctl enable las-api.service las-worker.service las-beat.service
+
+  # Re-ensure mTLS material so the reverse-proxy can reload safely.
+  ensure_mtls_material "$install_dir" "$vpy" "$mtls_dir" || true
   return 0
 }
 
@@ -383,6 +423,7 @@ python_bin="python3"
 listen_host="0.0.0.0"
 listen_port="8000"
 env_file="/etc/las/server.env"
+mtls_dir="/etc/las/mtls"
 
 postgres_mode="existing"
 postgres_host=""
@@ -411,6 +452,7 @@ while [[ $# -gt 0 ]]; do
     --listen-host) listen_host="${2:-}"; shift 2 ;;
     --listen-port) listen_port="${2:-}"; shift 2 ;;
     --env-file) env_file="${2:-}"; shift 2 ;;
+    --mtls-dir) mtls_dir="${2:-}"; shift 2 ;;
 
     --postgres) postgres_mode="${2:-}"; shift 2 ;;
     --postgres-host) postgres_host="${2:-}"; shift 2 ;;
@@ -571,8 +613,11 @@ if [[ "$cmd" == "install" ]]; then
   echo "[LAS Server] Instalando dependencias do backend..."
   "$pip" install -r "$install_dir/backend/requirements.txt"
 
-  write_env_file "$env_file" "$listen_host" "$listen_port" "$postgres_host" "$postgres_port" "$postgres_db" "$postgres_user" "$postgres_password" "$redis_host" "$redis_port" "$redis_db" "$redis_password" "$otel_endpoint"
-  write_meta "$install_dir" "$env_file" "$python_bin" "$vpy" "$listen_host" "$listen_port"
+  write_env_file "$env_file" "$listen_host" "$listen_port" "$postgres_host" "$postgres_port" "$postgres_db" "$postgres_user" "$postgres_password" "$redis_host" "$redis_port" "$redis_db" "$redis_password" "$otel_endpoint" "$mtls_dir"
+  write_meta "$install_dir" "$env_file" "$python_bin" "$vpy" "$listen_host" "$listen_port" "$mtls_dir"
+
+  echo "[LAS Server] Garantindo material mTLS em $mtls_dir"
+  ensure_mtls_material "$install_dir" "$vpy" "$mtls_dir"
 
   echo "[LAS Server] Criando units do systemd..."
   systemd_unit_api "$install_dir" "$env_file" "$vpy"

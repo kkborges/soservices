@@ -72,7 +72,9 @@ mtls-api.soservices.com.br {
   tls {
     client_auth {
       mode require_and_verify
-      trusted_ca_cert_file /etc/las/mtls/mtls-ca.pem
+      # Caddy versions may warn about deprecated fields; prefer trust_pool.
+      # Use either "trust_pool" or "trusted_ca_cert_file" depending on your Caddy version.
+      trust_pool file /etc/las/mtls/ca.pem
     }
   }
   reverse_proxy 127.0.0.1:8000
@@ -84,6 +86,7 @@ Depois, configure a plataforma para usar o endpoint mTLS (variável de ambiente)
 - `MTLS_PLATFORM_URL=https://mtls-api.soservices.com.br`
 
 Observação: os arquivos da CA/certs dependem do seu fluxo de emissão. No Docker, eles ficam em `runtime/mtls/`.
+No standalone, o instalador do servidor cria por padrão em `/etc/las/mtls/` (`ca.pem`).
 
 ## 3) Modo Docker (SaaS/On-prem via Compose)
 
