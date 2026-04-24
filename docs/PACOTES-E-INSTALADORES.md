@@ -49,6 +49,9 @@ Arquivos e servicos padrao:
 
 - `LASAgentSetup.exe`: instalador do agente Windows (inclui install/uninstall).
 - `LASGatewaySetup.exe`: instalador do gateway Windows (inclui install/uninstall).
+- Servidor principal (standalone, sem Docker):
+  - Linux: `installer/linux/las-server-standalone-setup.sh`
+  - Windows: `installer/windows/install-las-server-standalone.ps1`
 - Fallback PowerShell:
   - agente: `/api/v1/agents/download/windows?format=ps1`
   - gateway: `/api/v1/agents/download/gateway/windows?format=ps1`
