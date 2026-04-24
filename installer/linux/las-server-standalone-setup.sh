@@ -106,6 +106,42 @@ print(''.join(secrets.choice(alphabet) for _ in range(32)))
 PY
 }
 
+meta_path_for_install() {
+  local install_dir="$1"
+  echo "$install_dir/.las-standalone.meta"
+}
+
+write_meta() {
+  local install_dir="$1"
+  local env_file="$2"
+  local python_bin="$3"
+  local vpy="$4"
+  local listen_host="$5"
+  local listen_port="$6"
+  local meta
+  meta="$(meta_path_for_install "$install_dir")"
+  umask 027
+  cat >"$meta" <<EOF
+ENV_FILE=${env_file}
+PYTHON_BIN=${python_bin}
+VENV_PY=${vpy}
+LISTEN_HOST=${listen_host}
+LISTEN_PORT=${listen_port}
+EOF
+  chmod 640 "$meta" || true
+}
+
+read_meta_value() {
+  local meta="$1"
+  local key="$2"
+  if [[ ! -f "$meta" ]]; then
+    echo ""
+    return 0
+  fi
+  # shellcheck disable=SC2002
+  cat "$meta" | grep -E "^${key}=" | head -n 1 | sed -E "s/^${key}=//"
+}
+
 write_env_file() {
   local env_file="$1"
   local listen_host="$2"
@@ -149,6 +185,60 @@ EOF
 
   chmod 640 "$env_file"
   echo "[LAS Server] Env gravado em: $env_file"
+}
+
+units_present() {
+  [[ -f /etc/systemd/system/las-api.service && -f /etc/systemd/system/las-worker.service && -f /etc/systemd/system/las-beat.service ]]
+}
+
+repair_units_if_possible() {
+  local install_dir="$1"
+
+  if units_present; then
+    return 0
+  fi
+
+  if ! have_cmd systemctl; then
+    echo "[LAS Server] systemctl nao encontrado; nao e possivel gerenciar services." >&2
+    return 1
+  fi
+
+  local meta
+  meta="$(meta_path_for_install "$install_dir")"
+  local env_file
+  env_file="$(read_meta_value "$meta" "ENV_FILE")"
+  local vpy
+  vpy="$(read_meta_value "$meta" "VENV_PY")"
+
+  if [[ -z "$env_file" ]]; then
+    env_file="/etc/las/server.env"
+  fi
+  if [[ -z "$vpy" ]]; then
+    vpy="$install_dir/venv/bin/python"
+  fi
+
+  if [[ ! -f "$env_file" ]]; then
+    echo "[LAS Server] Units nao encontrados e env_file nao existe: $env_file" >&2
+    echo "[LAS Server] Rode novamente o comando install para recriar a configuracao e services." >&2
+    return 1
+  fi
+  if [[ ! -x "$vpy" ]]; then
+    echo "[LAS Server] Units nao encontrados e venv python nao existe/executavel: $vpy" >&2
+    echo "[LAS Server] Rode novamente o comando install para recriar o ambiente." >&2
+    return 1
+  fi
+  if [[ ! -d "$install_dir/backend" ]]; then
+    echo "[LAS Server] Pasta backend nao encontrada em $install_dir/backend" >&2
+    return 1
+  fi
+
+  echo "[LAS Server] Units do systemd nao encontrados. Recriando a partir do metadata..."
+  systemd_unit_api "$install_dir" "$env_file" "$vpy"
+  systemd_unit_worker "$install_dir" "$env_file" "$vpy"
+  systemd_unit_beat "$install_dir" "$env_file" "$vpy"
+  systemctl daemon-reload
+  systemctl enable las-api.service las-worker.service las-beat.service
+  return 0
 }
 
 systemd_unit_api() {
@@ -482,6 +572,7 @@ if [[ "$cmd" == "install" ]]; then
   "$pip" install -r "$install_dir/backend/requirements.txt"
 
   write_env_file "$env_file" "$listen_host" "$listen_port" "$postgres_host" "$postgres_port" "$postgres_db" "$postgres_user" "$postgres_password" "$redis_host" "$redis_port" "$redis_db" "$redis_password" "$otel_endpoint"
+  write_meta "$install_dir" "$env_file" "$python_bin" "$vpy" "$listen_host" "$listen_port"
 
   echo "[LAS Server] Criando units do systemd..."
   systemd_unit_api "$install_dir" "$env_file" "$vpy"
@@ -497,18 +588,21 @@ if [[ "$cmd" == "install" ]]; then
 fi
 
 if [[ "$cmd" == "start" ]]; then
+  repair_units_if_possible "$install_dir" || exit 2
   systemctl restart las-api.service las-worker.service las-beat.service
   systemctl restart las-otelcol.service >/dev/null 2>&1 || true
   exit 0
 fi
 
 if [[ "$cmd" == "stop" ]]; then
+  repair_units_if_possible "$install_dir" || true
   systemctl stop las-api.service las-worker.service las-beat.service || true
   systemctl stop las-otelcol.service >/dev/null 2>&1 || true
   exit 0
 fi
 
 if [[ "$cmd" == "status" ]]; then
+  repair_units_if_possible "$install_dir" || true
   systemctl --no-pager status las-api.service las-worker.service las-beat.service || true
   systemctl --no-pager status las-otelcol.service >/dev/null 2>&1 || true
   exit 0
