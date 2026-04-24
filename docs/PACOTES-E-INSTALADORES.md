@@ -66,3 +66,18 @@ Arquivos e servicos padrao:
 - Agentes e gateways consultam a plataforma periodicamente pela rota mTLS `/api/v1/agents/updates/check`.
 - A plataforma responde a versao mais recente, artefato correto por sistema operacional e `SHA256` esperado.
 - O componente baixa o novo payload somente quando houver versao diferente, valida o hash, troca o arquivo local e reinicia o processo/servico.
+
+## Bundles de deploy (SaaS / On-prem / Instaladores)
+
+Para entregar um kit portavel (sem depender do repo completo), os bundles `LAS_*` sao gerados localmente em `releases/`:
+
+```bash
+python scripts/build_release_bundles.py
+```
+
+Isso cria:
+- `LAS_SAAS_DEPLOY_YYYYMMDD.tar.gz`
+- `LAS_ONPREM_DEPLOY_YYYYMMDD.tar.gz`
+- `LAS_INSTALLERS_YYYYMMDD.tar.gz`
+
+Observacao: `releases/` e ignorado no git por padrao (artefatos gerados).
