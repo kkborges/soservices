@@ -443,8 +443,30 @@ if [[ "$cmd" == "install" ]]; then
   mkdir -p "$install_dir"
   echo "[LAS Server] Extraindo bundle para: $install_dir"
   tar -xzf "$bundle" -C "$install_dir"
-  if [[ ! -d "$install_dir/backend" ]]; then
-    echo "[LAS Server] Bundle extraido nao contem backend/ (esperado deploy bundle LAS_*_DEPLOY)." >&2
+  # Some users may accidentally pass LAS_INSTALLERS_*.tar.gz instead of LAS_*_DEPLOY_*.tar.gz,
+  # or may extract into a nested folder. Detect and guide.
+  backend_dir="$install_dir/backend"
+  if [[ ! -f "$backend_dir/requirements.txt" ]]; then
+    # Try to locate a nested deploy bundle structure.
+    candidate_req="$(find "$install_dir" -maxdepth 4 -type f -path '*/backend/requirements.txt' 2>/dev/null | head -n 1 || true)"
+    if [[ -n "$candidate_req" ]]; then
+      backend_dir="$(dirname "$candidate_req")"
+      # backend_dir ends with /backend
+      install_dir="$(dirname "$backend_dir")"
+      echo "[LAS Server] Detectado deploy extraido em subdiretorio. Usando install_dir=$install_dir"
+    fi
+  fi
+  backend_dir="$install_dir/backend"
+  if [[ ! -f "$backend_dir/requirements.txt" ]]; then
+    if [[ -d "$install_dir/dist" || -d "$install_dir/installer" ]]; then
+      echo "[LAS Server] Bundle informado parece ser um bundle de instaladores (LAS_INSTALLERS_*)." >&2
+      echo "[LAS Server] Para o servidor standalone, use um bundle de deploy:" >&2
+      echo "  - LAS_ONPREM_DEPLOY_YYYYMMDD.tar.gz  (recomendado para on-prem)" >&2
+      echo "  - LAS_SAAS_DEPLOY_YYYYMMDD.tar.gz" >&2
+    else
+      echo "[LAS Server] Bundle extraido nao contem backend/requirements.txt (esperado deploy bundle LAS_*_DEPLOY)." >&2
+    fi
+    echo "[LAS Server] Conteudo extraido em: $install_dir" >&2
     exit 2
   fi
 
@@ -510,4 +532,3 @@ if [[ "$cmd" == "uninstall" ]]; then
   echo "[LAS Server] Desinstalacao concluida."
   exit 0
 fi
-
