@@ -18,6 +18,8 @@ O objetivo e sempre o mesmo: **minima interacao humana**, **mTLS obrigatorio**, 
 3. Um reverse-proxy na borda (Nginx Proxy Manager, Nginx, HAProxy ou Ingress) termina TLS e roteia:
    - `/` (SPA) -> `las-frontend` (ou `las-frontend-ha`)
    - `/api/*` -> `las-api` (single) ou `las-api-ha` (HA)
+   
+Alternativa: Caddy também pode cumprir esse papel. Veja `docs/DEPLOYMENT-CADDY.md`.
 
 ### Comunicacao de agentes e gateways
 
