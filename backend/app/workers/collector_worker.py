@@ -2,6 +2,7 @@
 Collector Worker — Collects metrics from cloud providers (AWS, Azure, GCP),
 Kubernetes, VMware and SNMP network assets.
 """
+import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from app.workers.celery_app import celery_app
