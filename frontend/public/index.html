@@ -70,12 +70,24 @@
         </div>
         <div class="topbar-actions">
           <span id="api-status" class="tag">API</span>
+          <button id="ui-toggle" class="button ghost" type="button" title="Alternar UI (classic / v2)">UI</button>
           <a class="button ghost" href="/docs/cliente-validacao.html" target="_blank" rel="noreferrer">Docs</a>
           <a class="button ghost" href="/api/health" target="_blank" rel="noreferrer">Health</a>
         </div>
       </header>
       <div id="app-content" class="content"></div>
     </main>
+
+    <aside id="inspector" class="inspector hidden" aria-label="Painel de propriedades">
+      <header class="inspector-header">
+        <div>
+          <p class="eyebrow" id="inspector-eyebrow">Propriedades</p>
+          <h2 id="inspector-title">Detalhes</h2>
+        </div>
+        <button id="inspector-close" class="button ghost" type="button" aria-label="Fechar painel">Fechar</button>
+      </header>
+      <div id="inspector-body" class="inspector-body"></div>
+    </aside>
   </section>
 
   <script type="module" src="/app.js"></script>

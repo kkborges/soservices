@@ -1,4 +1,13 @@
-const state = { view: "dashboard", currentUser: null, selectedHostId: null, hostTimeframe: "1h", topologyScope: "network", filters: {} };
+const UI_STORAGE_KEY = "las_ui_version";
+const state = {
+  view: "dashboard",
+  currentUser: null,
+  selectedHostId: null,
+  hostTimeframe: "1h",
+  topologyScope: "network",
+  filters: {},
+  ui: localStorage.getItem(UI_STORAGE_KEY) || "classic",
+};
 
 const PLATFORM_VIEWS = ["dashboard", "tenants", "licensing", "settings"];
 const TENANT_VIEWS = [
@@ -54,6 +63,33 @@ const titleMap = {
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+
+function isUiV2() {
+  return state.ui === "v2";
+}
+
+function applyUi() {
+  document.body.dataset.ui = state.ui === "v2" ? "v2" : "classic";
+  $("#ui-toggle") && ($("#ui-toggle").textContent = state.ui === "v2" ? "UI: v2" : "UI: classic");
+}
+
+function closeInspector() {
+  const inspector = $("#inspector");
+  if (!inspector) return;
+  inspector.classList.add("hidden");
+  document.body.classList.remove("has-inspector");
+  $("#inspector-body").innerHTML = "";
+}
+
+function openInspector({ title = "Detalhes", eyebrow = "Propriedades", body = "" } = {}) {
+  const inspector = $("#inspector");
+  if (!inspector) return;
+  $("#inspector-title").textContent = title;
+  $("#inspector-eyebrow").textContent = eyebrow;
+  $("#inspector-body").innerHTML = body;
+  inspector.classList.remove("hidden");
+  document.body.classList.add("has-inspector");
+}
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -126,6 +162,8 @@ const healthState = (value) => {
   if (text.includes("warn") || text.includes("stale") || text.includes("pending")) return { key: "warning", label: "ATENCAO", hint: "Requer validacao" };
   return { key: "offline", label: "DOWN", hint: "Sem heartbeat recente" };
 };
+const healthLabel = (value) => healthState(value).label;
+const healthDot = (value) => `<span class="dot ${esc(healthState(value).key)}"></span>`;
 const healthPill = (value) => {
   const health = healthState(value);
   return `<span class="health-pill ${health.key}"><span></span><strong>${health.label}</strong><small>${health.hint}</small></span>`;
@@ -572,6 +610,11 @@ async function renderHostSettings(hostId) {
 }
 
 async function renderHostDetail(hostId, options = {}) {
+  if (isUiV2()) {
+    await renderHostDetailV2(hostId, options);
+    return;
+  }
+  closeInspector();
   const timeframe = options.timeframe || state.hostTimeframe || "1h";
   const params = new URLSearchParams({ timeframe });
   if (timeframe === "custom") {
@@ -610,6 +653,205 @@ async function renderHostDetail(hostId, options = {}) {
     setFilter("logs", "host", host.hostname || host.ip || "");
     loadView("logs");
   });
+}
+
+function hostPropertiesInspector(host) {
+  const tags = (host.tags || []).slice(0, 20);
+  const interfaces = host.interfaces || [];
+  const ifaceRows = interfaces.length
+    ? table(["Interface", "IPs", "MAC", "Status"], interfaces.slice(0, 6).map((iface) => [
+      esc(iface.name || iface.iface || "-"),
+      esc((iface.ips || iface.addresses || []).join(", ") || "-"),
+      esc(iface.mac || "-"),
+      status(iface.status || "-"),
+    ]))
+    : `<p class="muted">Interfaces nao informadas pelo agente ainda.</p>`;
+
+  return `
+    <article class="card">
+      <h3>Geral</h3>
+      <div class="detail-grid">
+        <span>Hostname<br><strong>${esc(host.hostname || "-")}</strong></span>
+        <span>Sistema<br><strong>${esc(host.os || "-")} ${esc(host.os_version || "")}</strong></span>
+        <span>IP (primario)<br><strong>${esc(host.ip || "-")}</strong></span>
+        <span>Ultima comunicacao<br><strong>${fmt(host.last_seen)}</strong></span>
+        <span>Agente<br><strong>${esc(host.agent_version || "nao instalado")}</strong></span>
+        <span>Modo<br><strong>${esc(host.monitoring_mode || "-")}</strong></span>
+      </div>
+    </article>
+    <article class="card">
+      <h3>Hardware</h3>
+      <div class="detail-grid">
+        <span>CPU cores<br><strong>${num(host.cpu_cores)}</strong></span>
+        <span>RAM total<br><strong>${num(host.memory_total_mb)} MB</strong></span>
+        <span>Disco total<br><strong>${num(host.disk_total_gb)} GB</strong></span>
+        <span>Uptime<br><strong>${esc(host.uptime || "-")}</strong></span>
+      </div>
+    </article>
+    <article class="card">
+      <h3>Rede</h3>
+      ${ifaceRows}
+    </article>
+    <article class="card">
+      <h3>Tags</h3>
+      ${tags.length ? `<div class="pill-row">${tags.map((tag) => `<span class="tag">${esc(tag)}</span>`).join("")}</div>` : `<p class="muted">Sem tags definidas.</p>`}
+    </article>
+  `;
+}
+
+async function renderHostDetailV2(hostId, options = {}) {
+  const timeframe = options.timeframe || state.hostTimeframe || "1h";
+  const params = new URLSearchParams({ timeframe });
+  if (timeframe === "custom") {
+    if (options.start) params.set("start", new Date(options.start).toISOString());
+    if (options.end) params.set("end", new Date(options.end).toISOString());
+  }
+  const data = await api(`/api/v1/hosts/${hostId}/detail?${params.toString()}`);
+  const host = data.host;
+  const processes = data.processes || [];
+  const logs = data.logs || [];
+  const incidents = data.incidents || [];
+  const rateMetrics = deriveRates(data.metrics || []);
+  const latest = latestPoint(rateMetrics);
+  const logsPreview = logs.slice(0, 10);
+
+  render(`
+    <section class="entity-detail v2">
+      <article class="detail-hero card v2-hero">
+        <div class="v2-hero-main">
+          <p class="eyebrow">Hosts <span class="muted">/</span> ${esc(host.hostname)}</p>
+          <div class="v2-title-row">
+            <h2>${esc(host.hostname)}</h2>
+            <span class="tag">${esc(host.os || "SO nao identificado")}</span>
+            <span class="tag">${esc(host.monitoring_mode || "infra")}</span>
+            <span class="status">${healthDot(host.status)} ${esc(host.status || "offline")}</span>
+          </div>
+          <p class="muted">${esc(host.os_version || "")} ${host.ip ? `• ${esc(host.ip)}` : ""} ${host.agent_version ? `• agente ${esc(host.agent_version)}` : ""}</p>
+          <div class="actions v2-actions">
+            <button class="button ghost v2-open-props" type="button">Propriedades</button>
+            <button class="button ghost v2-open-procs" type="button">Processos</button>
+            <button class="button ghost v2-open-logs" type="button">Logs</button>
+            <button class="button primary v2-restart" type="button" disabled title="Disponivel quando o endpoint de controle do agente estiver ativo">Reiniciar agente</button>
+            <button id="back-hosts" class="button ghost" type="button">Voltar</button>
+          </div>
+        </div>
+        <div class="v2-hero-kpis">
+          ${metricTile("Saude do host", healthLabel(host.status), "Resumo operacional")}
+          ${metricTile("Ultima comunicacao", fmt(host.last_seen), "Heartbeat")}
+          ${metricTile("CPU agora", `${num(latest.cpuUsage)}%`, "snapshot")}
+          ${metricTile("Memoria agora", `${num(latest.memoryUsage)}%`, "snapshot")}
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="section-header">
+          <div>
+            <h3>Consumo (timeframe)</h3>
+            <p class="muted">CPU, memoria, disco e rede derivados dos dados reais do agente.</p>
+          </div>
+        </div>
+        ${timeframeControl("host-detail", timeframe)}
+        <div class="charts-grid three">
+          ${seriesChart("CPU", data.metrics, [{ key: "cpuUsage", label: "CPU" }], { max: 100 })}
+          ${seriesChart("Memoria", data.metrics, [{ key: "memoryUsage", label: "Memoria" }], { max: 100 })}
+          ${seriesChart("Disco", data.metrics, [{ key: "diskUsage", label: "Disco" }], { max: 100 })}
+        </div>
+        <div class="charts-grid">
+          ${seriesChart("Rede In / Download", rateMetrics, [{ key: "netInRate", label: "In / Download" }])}
+          ${seriesChart("Rede Out / Upload", rateMetrics, [{ key: "netOutRate", label: "Out / Upload" }])}
+        </div>
+      </article>
+
+      <section class="grid two">
+        <article class="card">
+          <div class="section-header">
+            <div>
+              <h3>Incidentes (ultimos 2)</h3>
+              <p class="muted">Quando houver baselines e alertas, eles aparecem aqui para drill down.</p>
+            </div>
+          </div>
+          ${incidents.length ? table(["ID", "Descricao", "Status", "Duracao"], incidents.slice(0, 2).map((incident) => [
+            `<span class="mono">${esc(incident.id.slice(0, 8))}</span>`,
+            `<strong>${esc(incident.name)}</strong><br><small>${esc(incident.description || "-")}</small>`,
+            status(incident.status),
+            incidentDuration(incident),
+          ])) : `<p class="muted">Nenhum incidente real registrado para este host.</p>`}
+        </article>
+        <article class="card">
+          <div class="section-header">
+            <div>
+              <h3>Logs recentes (10)</h3>
+              <p class="muted">Preview rapido. Use "Logs" para pesquisar e filtrar.</p>
+            </div>
+            <div class="actions">
+              <button class="button ghost v2-open-logs" type="button">Abrir Logs</button>
+            </div>
+          </div>
+          ${logsPreview.length ? table(["Quando", "Nivel", "Origem", "Mensagem"], logsPreview.map((log) => [
+            fmt(log.timestamp),
+            esc(log.level),
+            esc(log.source || log.service || "-"),
+            esc(log.message),
+          ])) : `<p class="muted">Nenhum log real encontrado para este host.</p>`}
+        </article>
+      </section>
+
+      <article class="card">
+        <div class="section-header">
+          <div>
+            <h3>Processos (top)</h3>
+            <p class="muted">Ordenado pelo consumo no snapshot mais recente. Clique em "Processos" para aplicar filtros.</p>
+          </div>
+          <div class="actions">
+            <button class="button ghost v2-open-procs" type="button">Ver processos</button>
+          </div>
+        </div>
+        ${processes.length ? table(["PID", "Processo", "Usuario", "CPU", "RAM"], processes.slice(0, 12).map((proc) => [
+          esc(proc.pid || "-"),
+          `<strong>${esc(proc.name)}</strong>`,
+          esc(proc.username || "-"),
+          `${num(proc.cpuUsage)}%`,
+          `${num(proc.memoryUsage)}%`,
+        ])) : `<p class="muted">Ainda nao ha snapshot real de processos para este host.</p>`}
+      </article>
+    </section>
+  `);
+
+  // Inspector default
+  openInspector({
+    title: host.hostname || "Host",
+    eyebrow: "Propriedades do host",
+    body: hostPropertiesInspector(host),
+  });
+
+  const timeframeSelect = $("#host-detail-timeframe");
+  const customRanges = $$(".custom-range");
+  const updateCustomVisibility = () => customRanges.forEach((item) => item.classList.toggle("hidden", timeframeSelect.value !== "custom"));
+  updateCustomVisibility();
+  timeframeSelect.addEventListener("change", updateCustomVisibility);
+  $("#host-detail-apply").addEventListener("click", () => {
+    state.hostTimeframe = timeframeSelect.value;
+    renderHostDetailV2(hostId, {
+      timeframe: timeframeSelect.value,
+      start: $("#host-detail-start")?.value,
+      end: $("#host-detail-end")?.value,
+    });
+  });
+  $("#back-hosts").addEventListener("click", () => loadView("hosts"));
+
+  $$(".v2-open-props").forEach((button) => button.addEventListener("click", () => openInspector({
+    title: host.hostname || "Host",
+    eyebrow: "Propriedades do host",
+    body: hostPropertiesInspector(host),
+  })));
+  $$(".v2-open-procs").forEach((button) => button.addEventListener("click", () => {
+    setFilter("processes", "host", host.hostname || host.ip || "");
+    loadView("processes");
+  }));
+  $$(".v2-open-logs").forEach((button) => button.addEventListener("click", () => {
+    setFilter("logs", "host", host.hostname || host.ip || "");
+    loadView("logs");
+  }));
 }
 
 const topologyScopes = [
@@ -1655,6 +1897,7 @@ docker compose up -d --build</code></pre>
 
 async function loadView(view) {
   setView(view);
+  closeInspector();
   render(`<article class="card"><p class="muted">Carregando ${esc(titleMap[view] || view)}...</p></article>`);
   try {
     if (view === "dashboard") {
@@ -1922,6 +2165,28 @@ $("#logout-button").addEventListener("click", async () => {
   await api("/api/v1/auth/logout", { method: "POST" });
   $("#login-screen").classList.remove("hidden");
   $("#app-screen").classList.add("hidden");
+  closeInspector();
 });
 
+$("#inspector-close")?.addEventListener("click", closeInspector);
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeInspector();
+});
+
+$("#ui-toggle")?.addEventListener("click", () => {
+  state.ui = state.ui === "v2" ? "classic" : "v2";
+  localStorage.setItem(UI_STORAGE_KEY, state.ui);
+  applyUi();
+
+  // Re-render current screen in the new UI without forcing navigation.
+  if (!$("#app-screen").classList.contains("hidden")) {
+    if ($(".entity-detail") && state.selectedHostId) {
+      renderHostDetail(state.selectedHostId).catch(() => loadView(state.view));
+      return;
+    }
+    loadView(state.view);
+  }
+});
+
+applyUi();
 bootstrap();

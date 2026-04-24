@@ -18,6 +18,7 @@ body {
   min-height: 100vh;
   font-family: "Segoe UI", system-ui, sans-serif;
   color: var(--text);
+  color-scheme: dark;
   background:
     radial-gradient(circle at top left, rgba(255, 55, 95, 0.18), transparent 28%),
     radial-gradient(circle at bottom right, rgba(70, 212, 197, 0.12), transparent 28%),
@@ -405,4 +406,162 @@ th { font-size: .78rem; color: var(--muted); text-transform: uppercase; letter-s
   .login-screen, .main { padding: 18px; }
   .hero, .card, .form-card { padding: 22px; border-radius: 22px; }
   .form-grid { grid-template-columns: 1fr; }
+}
+
+/* ============================================================
+   UI v2 (tema alternativo) + Inspector (painel lateral)
+   Ativado por: body[data-ui="v2"]
+   ============================================================ */
+
+.app-screen {
+  transition: grid-template-columns .22s ease;
+}
+body.has-inspector .app-screen {
+  grid-template-columns: 300px minmax(0, 1fr) 380px;
+}
+
+.inspector {
+  min-height: 100vh;
+  position: sticky;
+  top: 0;
+  background: rgba(7, 16, 29, .94);
+  border-left: 1px solid var(--line);
+  padding: 18px 16px 22px;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 14px;
+  overflow: hidden;
+}
+.inspector-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.inspector-header h2 {
+  margin: 0;
+  font-size: 1.2rem;
+  letter-spacing: -.02em;
+}
+.inspector-body {
+  overflow: auto;
+  padding-right: 4px;
+}
+
+body[data-ui="v2"] {
+  --bg: #050b14;
+  --panel: rgba(10, 16, 27, 0.92);
+  --panel-2: rgba(14, 24, 40, 0.94);
+  --line: rgba(255, 255, 255, 0.10);
+  --text: #eef4ff;
+  --muted: rgba(221, 231, 255, .62);
+  --primary: #ff4a6e;
+  --accent: #36e3d2;
+}
+
+body[data-ui="v2"] .sidebar {
+  background:
+    radial-gradient(circle at 20% 0%, rgba(54,227,210,.10), transparent 36%),
+    radial-gradient(circle at 70% 40%, rgba(255,74,110,.09), transparent 42%),
+    rgba(6, 12, 22, .92);
+}
+body[data-ui="v2"] .sidebar-logo {
+  border-radius: 14px;
+  padding: 10px;
+}
+body[data-ui="v2"] .nav {
+  gap: 6px;
+}
+body[data-ui="v2"] .nav-link {
+  justify-content: flex-start;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: rgba(221, 231, 255, .78);
+}
+body[data-ui="v2"] .nav-link:hover {
+  border-color: rgba(255,255,255,.10);
+  background: rgba(255,255,255,.06);
+}
+body[data-ui="v2"] .nav-link.active {
+  border-color: rgba(54,227,210,.42);
+  background: linear-gradient(135deg, rgba(54,227,210,.12), rgba(255,255,255,.04));
+  color: var(--text);
+}
+
+body[data-ui="v2"] .topbar {
+  background: linear-gradient(180deg, rgba(6,12,22,.65), rgba(6,12,22,0));
+  border-bottom: 1px solid rgba(255,255,255,.06);
+}
+body[data-ui="v2"] .card {
+  background:
+    radial-gradient(circle at 20% 0%, rgba(54,227,210,.07), transparent 40%),
+    radial-gradient(circle at 90% 80%, rgba(255,74,110,.06), transparent 46%),
+    var(--panel);
+  box-shadow: 0 32px 120px rgba(0,0,0,.38);
+}
+body[data-ui="v2"] .metric-tile {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.065), rgba(255,255,255,.02));
+}
+
+body[data-ui="v2"] select {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, rgba(221,231,255,.7) 50%),
+    linear-gradient(135deg, rgba(221,231,255,.7) 50%, transparent 50%);
+  background-position:
+    calc(100% - 22px) calc(50% - 3px),
+    calc(100% - 16px) calc(50% - 3px);
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+  padding-right: 42px;
+}
+
+body[data-ui="v2"] .v2-hero {
+  display: grid;
+  grid-template-columns: 1.15fr .85fr;
+  align-items: start;
+  gap: 18px;
+}
+body[data-ui="v2"] .v2-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+body[data-ui="v2"] .v2-title-row h2 {
+  margin: 0;
+  font-size: clamp(1.8rem, 3.5vw, 3.1rem);
+  letter-spacing: -.04em;
+}
+body[data-ui="v2"] .v2-actions {
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+body[data-ui="v2"] .v2-hero-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+body[data-ui="v2"] .v2-hero-kpis .metric-tile {
+  min-height: 106px;
+  border-radius: 20px;
+  padding: 16px;
+}
+
+@media (max-width: 1120px) {
+  body[data-ui="v2"] .v2-hero { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 1120px) {
+  body.has-inspector .app-screen { grid-template-columns: 1fr; }
+  .inspector {
+    position: fixed;
+    inset: 10px;
+    z-index: 120;
+    border-radius: 22px;
+    box-shadow: 0 28px 90px rgba(0,0,0,.55);
+  }
 }
