@@ -1,3 +1,13 @@
+param(
+  [ValidateSet("install","start","stop","status","uninstall")]
+  [string]$Action = "install",
+  [string]$Bundle = "",
+  [string]$InstallDir = "C:\\LASServer",
+  [ValidateSet("onprem","saas")]
+  [string]$Mode = "onprem",
+  [switch]$PurgeVolumes
+)
+
 $ErrorActionPreference = "Stop"
 
 function Write-Section($text) {
@@ -23,16 +33,6 @@ function Get-ComposeCommand {
   }
   return $null
 }
-
-param(
-  [ValidateSet("install","start","stop","status","uninstall")]
-  [string]$Action = "install",
-  [string]$Bundle = "",
-  [string]$InstallDir = "C:\\LASServer",
-  [ValidateSet("onprem","saas")]
-  [string]$Mode = "onprem",
-  [switch]$PurgeVolumes
-)
 
 Assert-Admin
 $compose = Get-ComposeCommand
@@ -118,4 +118,3 @@ if ($Action -eq "uninstall") {
   Write-Host "Desinstalacao concluida." -ForegroundColor Green
   exit 0
 }
-

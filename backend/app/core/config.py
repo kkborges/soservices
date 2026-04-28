@@ -151,6 +151,7 @@ class Settings(BaseSettings):
     DEMO_ADMIN_EMAIL: str = "demo_las@soservices.com.br"
     DEMO_ADMIN_USERNAME: str = "demo_las@soservices.com.br"
     DEMO_ADMIN_PASSWORD: str = "admin"
+    TRIAL_DAYS: int = 15
 
     # ── Synthetic Tests ────────────────────────────────────────────
     SYNTHETIC_WORKERS: int = 10

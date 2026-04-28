@@ -1,6 +1,6 @@
 """API v1 router — aggregates all endpoint modules."""
 from fastapi import APIRouter
-from app.api.v1.endpoints import agents, auth, edge, ingest, licenses, management, platform, tickets, enterprise
+from app.api.v1.endpoints import agents, auth, edge, ingest, licenses, management, platform, tickets, enterprise, trial
 
 api_router = APIRouter()
 
@@ -22,3 +22,4 @@ api_router.include_router(edge.router)
 
 # Enterprise services (session-authenticated)
 api_router.include_router(enterprise.router)
+api_router.include_router(trial.router)

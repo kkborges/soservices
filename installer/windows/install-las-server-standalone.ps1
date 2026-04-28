@@ -1,5 +1,3 @@
-$ErrorActionPreference = "Stop"
-
 <#
 LAS Server Standalone Setup (Windows, sem Docker)
 - Instala a API (uvicorn) + Celery worker + Celery beat como servicos via NSSM
@@ -15,6 +13,37 @@ Exemplos:
 
   .\\install-las-server-standalone.ps1 -Action status -InstallDir C:\\LASServerStandalone
 #>
+
+param(
+  [ValidateSet("install","start","stop","status","uninstall")]
+  [string]$Action = "install",
+
+  [string]$Bundle = "",
+  [string]$InstallDir = "C:\\LASServerStandalone",
+  [string]$ListenHost = "0.0.0.0",
+  [int]$ListenPort = 8000,
+
+  [ValidateSet("existing","local")]
+  [string]$Postgres = "existing",
+  [string]$PostgresHost = "",
+  [int]$PostgresPort = 5432,
+  [string]$PostgresDb = "las",
+  [string]$PostgresUser = "las",
+  [string]$PostgresPassword = "",
+
+  [ValidateSet("existing","local")]
+  [string]$Redis = "existing",
+  [string]$RedisHost = "",
+  [int]$RedisPort = 6379,
+  [int]$RedisDb = 0,
+  [string]$RedisPassword = "",
+
+  [ValidateSet("none","existing","local")]
+  [string]$Collector = "none",
+  [string]$OtelEndpoint = ""
+)
+
+$ErrorActionPreference = "Stop"
 
 function Assert-Admin {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -59,35 +88,6 @@ function Install-IfLocalDeps([string]$PostgresMode, [string]$RedisMode, [string]
     & choco install $pkg -y | Out-Null
   }
 }
-
-param(
-  [ValidateSet("install","start","stop","status","uninstall")]
-  [string]$Action = "install",
-
-  [string]$Bundle = "",
-  [string]$InstallDir = "C:\\LASServerStandalone",
-  [string]$ListenHost = "0.0.0.0",
-  [int]$ListenPort = 8000,
-
-  [ValidateSet("existing","local")]
-  [string]$Postgres = "existing",
-  [string]$PostgresHost = "",
-  [int]$PostgresPort = 5432,
-  [string]$PostgresDb = "las",
-  [string]$PostgresUser = "las",
-  [string]$PostgresPassword = "",
-
-  [ValidateSet("existing","local")]
-  [string]$Redis = "existing",
-  [string]$RedisHost = "",
-  [int]$RedisPort = 6379,
-  [int]$RedisDb = 0,
-  [string]$RedisPassword = "",
-
-  [ValidateSet("none","existing","local")]
-  [string]$Collector = "none",
-  [string]$OtelEndpoint = ""
-)
 
 Assert-Admin
 

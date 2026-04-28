@@ -4,6 +4,7 @@ Gera os bundles de deploy em releases/:
 - LAS_SAAS_DEPLOY_YYYYMMDD.tar.gz
 - LAS_ONPREM_DEPLOY_YYYYMMDD.tar.gz
 - LAS_INSTALLERS_YYYYMMDD.tar.gz
+- LAS_PLATFORM_INSTALLER_YYYYMMDD.tar.gz
 
 Objetivo: entregar um "kit" portavel com docker-compose/k8s/docs/scripts e instaladores,
 sem depender do repo completo.
@@ -78,6 +79,30 @@ def _build_tar(out_path: Path, repo_root: Path, includes: list[str]) -> None:
     tmp.replace(out_path)
 
 
+def _build_universal_installer_tar(
+    out_path: Path,
+    repo_root: Path,
+    includes: list[str],
+    release_bundle_paths: list[Path],
+) -> None:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out_path.with_suffix(out_path.suffix + ".tmp")
+    if tmp.exists():
+        tmp.unlink()
+
+    with tarfile.open(tmp, "w:gz", compresslevel=6) as tar:
+        for rel in includes:
+            _add_path(tar, repo_root, rel)
+        for bundle in release_bundle_paths:
+            if not bundle.exists():
+                raise SystemExit(f"Bundle base nao encontrado para installer universal: {bundle}")
+            tar.add(str(bundle), arcname=f"bundles/{bundle.name}")
+
+    if out_path.exists():
+        out_path.unlink()
+    tmp.replace(out_path)
+
+
 def _date_yyyymmdd() -> str:
     # Uses local time (America/Sao_Paulo in our env)
     return datetime.now().strftime("%Y%m%d")
@@ -113,6 +138,7 @@ def main() -> int:
     saas_name = f"LAS_SAAS_DEPLOY_{date}.tar.gz"
     onprem_name = f"LAS_ONPREM_DEPLOY_{date}.tar.gz"
     installers_name = f"LAS_INSTALLERS_{date}.tar.gz"
+    platform_installer_name = f"LAS_PLATFORM_INSTALLER_{date}.tar.gz"
 
     # Kits de deploy (SaaS e On-premise) sao equivalentes em conteudo.
     deploy_includes = [
@@ -141,22 +167,40 @@ def main() -> int:
         "docs/PACOTES-E-INSTALADORES.md",
         "docs/SUPORTE-E-COLETA-DE-LOGS.md",
         "docs/DEPLOYMENT-CLIENTE.md",
+        "docs/INSTALADOR-UNIFICADO-E-TRIAL.md",
+    ]
+
+    universal_includes = [
+        "installer",
+        "docs/INSTALADOR-UNIFICADO-E-TRIAL.md",
+        "docs/PACOTES-E-INSTALADORES.md",
+        "docs/DEPLOYMENT-CLIENTE.md",
+        "docs/DEPLOYMENT-CADDY.md",
+        "docs/FAILOVER-PRODUCAO.md",
     ]
 
     saas_path = releases_dir / saas_name
     onprem_path = releases_dir / onprem_name
     installers_path = releases_dir / installers_name
+    platform_installer_path = releases_dir / platform_installer_name
 
     _build_tar(saas_path, repo_root, deploy_includes)
     _build_tar(onprem_path, repo_root, deploy_includes)
     _build_tar(installers_path, repo_root, installers_includes)
+    _build_universal_installer_tar(
+        platform_installer_path,
+        repo_root,
+        universal_includes,
+        [saas_path, onprem_path, installers_path],
+    )
 
     if not args.keep_old:
         _cleanup_old(releases_dir, "LAS_SAAS_DEPLOY", saas_name)
         _cleanup_old(releases_dir, "LAS_ONPREM_DEPLOY", onprem_name)
         _cleanup_old(releases_dir, "LAS_INSTALLERS", installers_name)
+        _cleanup_old(releases_dir, "LAS_PLATFORM_INSTALLER", platform_installer_name)
 
-    for p in (saas_path, onprem_path, installers_path):
+    for p in (saas_path, onprem_path, installers_path, platform_installer_path):
         st = p.stat()
         print(f"{p.name}: {st.st_size} bytes ({datetime.fromtimestamp(st.st_mtime).isoformat(timespec='seconds')})")
 

@@ -82,5 +82,37 @@ Isso cria:
 - `LAS_SAAS_DEPLOY_YYYYMMDD.tar.gz`
 - `LAS_ONPREM_DEPLOY_YYYYMMDD.tar.gz`
 - `LAS_INSTALLERS_YYYYMMDD.tar.gz`
+- `LAS_PLATFORM_INSTALLER_YYYYMMDD.tar.gz`
 
 Observacao: `releases/` e ignorado no git por padrao (artefatos gerados).
+
+## Instalador unificado
+
+O pacote `LAS_PLATFORM_INSTALLER_YYYYMMDD.tar.gz` e o kit recomendado para entrega a clientes. Ele inclui os bundles SaaS/on-prem, o pacote de instaladores e os entrypoints:
+
+- Linux: `installer/linux/las-platform-installer.sh`
+- Windows: `installer/windows/install-las-platform.ps1`
+
+Exemplo Linux on-prem com Docker Compose:
+
+```bash
+sudo ./installer/linux/las-platform-installer.sh install \
+  --target server \
+  --deployment onprem \
+  --runtime compose \
+  --bundle ./bundles/LAS_ONPREM_DEPLOY_YYYYMMDD.tar.gz \
+  --install-dir /srv/las-plataforma/onprem
+```
+
+Exemplo agente Linux completo, baixando o instalador licenciado pelo tenant:
+
+```bash
+sudo ./installer/linux/las-platform-installer.sh install \
+  --target agent \
+  --api-url https://api.soservices.com.br \
+  --username usuario@cliente.com.br \
+  --password 'senha' \
+  --profile complete
+```
+
+O fluxo completo esta em `docs/INSTALADOR-UNIFICADO-E-TRIAL.md`.
