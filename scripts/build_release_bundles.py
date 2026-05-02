@@ -172,6 +172,7 @@ def main() -> int:
 
     universal_includes = [
         "installer",
+        "scripts/deploy",
         "docs/INSTALADOR-UNIFICADO-E-TRIAL.md",
         "docs/PACOTES-E-INSTALADORES.md",
         "docs/DEPLOYMENT-CLIENTE.md",

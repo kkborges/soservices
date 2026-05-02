@@ -11,13 +11,20 @@ namespaceOverride: ""
 
 images:
   api:
-    repository: las/backend
-    tag: "4.0.0"
+    # These images are NOT published publicly. Build and push them to a registry
+    # reachable by every Kubernetes node, then override this value.
+    repository: las-backend-release
+    tag: "4.1.0"
     pullPolicy: IfNotPresent
   frontend:
-    repository: las/frontend
-    tag: "4.0.0"
+    repository: las-frontend
+    tag: "4.1.0"
     pullPolicy: IfNotPresent
+
+# Example:
+# imagePullSecrets:
+#   - name: regcred
+imagePullSecrets: []
 
 replicas:
   api: 2

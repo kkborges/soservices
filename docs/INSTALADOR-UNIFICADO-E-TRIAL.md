@@ -61,11 +61,21 @@ Use `--deployment saas --runtime compose` ou `--deployment saas --runtime kubern
 
 Indicado para a nuvem da plataforma, com balanceadores, DNS publico e controle centralizado de tenants.
 
+Para Kubernetes, antes do Helm, faca build/push das imagens para um registry acessivel pelo cluster:
+
+```bash
+./scripts/deploy/las-k8s-build-push.sh --registry REGISTRY/las --tag 4.1.0
+```
+
+Em seguida use `--set images.api.repository=REGISTRY/las/las-backend-release` e `--set images.frontend.repository=REGISTRY/las/las-frontend` no Helm.
+
 ### On-premise orquestrado
 
 Use `--deployment onprem --runtime compose` ou `--deployment onprem --runtime kubernetes`.
 
 Indicado para cliente que quer executar a stack completa localmente, com gateways locais e opcionalmente um gateway de controle conectado ao SaaS.
+
+Em cluster on-premise sem registry externo, use um registry interno ou importe as imagens em todos os nós. Se as imagens nao estiverem acessiveis, os pods ficarao em `ImagePullBackOff`.
 
 ### Standalone sem Docker
 

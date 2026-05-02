@@ -12,8 +12,10 @@ This chart deploys **LAS Plataforma de Monitoramento e Observabilidade** on Kube
 ```bash
 kubectl create namespace las
 helm upgrade --install las k8s/helm/las-platform -n las \
-  --set images.api.repository=YOUR_REGISTRY/las-backend \
+  --set images.api.repository=YOUR_REGISTRY/las-backend-release \
+  --set images.api.tag=4.1.0 \
   --set images.frontend.repository=YOUR_REGISTRY/las-frontend \
+  --set images.frontend.tag=4.1.0 \
   --set env.POSTGRES_HOST=YOUR_PG_HOST \
   --set env.POSTGRES_PASSWORD=YOUR_PG_PASSWORD \
   --set env.REDIS_HOST=YOUR_REDIS_HOST \
@@ -21,6 +23,25 @@ helm upgrade --install las k8s/helm/las-platform -n las \
   --set env.SECRET_KEY=YOUR_SECRET_KEY \
   --set ingress.hosts.web=las.example.com \
   --set ingress.hosts.api=api.example.com
+```
+
+If pods show `ImagePullBackOff`, build and push the images first:
+
+```bash
+./scripts/deploy/las-k8s-build-push.sh --registry YOUR_REGISTRY --tag 4.1.0
+```
+
+For private registries:
+
+```bash
+kubectl -n las create secret docker-registry regcred \
+  --docker-server=YOUR_REGISTRY_HOST \
+  --docker-username=USER \
+  --docker-password=PASSWORD \
+  --docker-email=admin@example.com
+
+helm upgrade --install las k8s/helm/las-platform -n las \
+  --set imagePullSecrets[0].name=regcred
 ```
 
 ## mTLS (agents/gateways)
