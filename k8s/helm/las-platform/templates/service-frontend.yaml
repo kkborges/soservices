@@ -6,7 +6,7 @@ metadata:
   labels:
     {{- include "las.labels" . | nindent 4 }}
 spec:
-  type: ClusterIP
+  type: {{ .Values.service.frontend.type }}
   selector:
     app.kubernetes.io/name: {{ include "las.name" . }}
     app.kubernetes.io/component: frontend
@@ -15,3 +15,6 @@ spec:
     - name: http
       port: {{ .Values.service.frontend.port }}
       targetPort: http
+      {{- if .Values.service.frontend.nodePort }}
+      nodePort: {{ .Values.service.frontend.nodePort }}
+      {{- end }}

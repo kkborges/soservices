@@ -29,21 +29,37 @@ imagePullSecrets: []
 replicas:
   api: 2
   frontend: 2
+  worker: 1
+  beat: 1
 
 resources:
   api: {}
   frontend: {}
+  worker: {}
+  beat: {}
+
+postgresql:
+  enabled: true
+  image: postgres:16-alpine
+  storage: 20Gi
+  storageClassName: microk8s-hostpath
+
+redis:
+  enabled: true
+  image: redis:7-alpine
+  storage: 5Gi
+  storageClassName: microk8s-hostpath
 
 env:
   # Database (external or in-cluster)
-  POSTGRES_HOST: "postgres.default.svc.cluster.local"
+  POSTGRES_HOST: ""
   POSTGRES_PORT: "5432"
   POSTGRES_DB: "las"
   POSTGRES_USER: "las"
   POSTGRES_PASSWORD: "CHANGE_ME"
 
   # Redis
-  REDIS_HOST: "redis.default.svc.cluster.local"
+  REDIS_HOST: ""
   REDIS_PORT: "6379"
   REDIS_PASSWORD: "CHANGE_ME"
 
@@ -63,9 +79,13 @@ env:
 
 service:
   api:
+    type: ClusterIP
     port: 8000
+    nodePort: null
   frontend:
+    type: ClusterIP
     port: 80
+    nodePort: null
 
 ingress:
   enabled: true
