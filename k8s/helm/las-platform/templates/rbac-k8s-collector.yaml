@@ -1,0 +1,30 @@
+{{- if .Values.rbac.k8sCollector.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "las.fullname" . }}-k8s-collector
+  labels:
+    {{- include "las.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "pods", "services", "endpoints", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "las.fullname" . }}-k8s-collector
+  labels:
+    {{- include "las.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "las.fullname" . }}-k8s-collector
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "las.serviceAccountName" . }}
+    namespace: {{ include "las.namespace" . }}
+{{- end }}

@@ -26,6 +26,15 @@ images:
 #   - name: regcred
 imagePullSecrets: []
 
+serviceAccount:
+  create: true
+  name: ""
+
+rbac:
+  # Grants read-only Kubernetes API access required by collect_k8s_metrics.
+  k8sCollector:
+    enabled: false
+
 replicas:
   api: 2
   frontend: 2
@@ -70,6 +79,18 @@ env:
   # Public URLs (used in links and onboarding)
   PUBLIC_WEB_URL: "https://las.example.com"
   PLATFORM_URL: "https://api.example.com"
+
+  # mTLS enforcement for agent/gateway control endpoints.
+  # Keep true in production behind an mTLS-capable edge/Ingress.
+  # Set false only for isolated homologation deploys exposed by NodePort.
+  MTLS_ENABLED: "true"
+  MTLS_REQUIRED: "true"
+  MTLS_PLATFORM_URL: "https://mtls-api.example.com"
+
+  # Kubernetes collector. Enable when the worker runs inside a cluster and
+  # the service account has read access to pods, nodes and deployments.
+  K8S_IN_CLUSTER: "false"
+  KUBECONFIG_PATH: ""
 
   # Optional AI providers
   AI_PROVIDER: "openai"
