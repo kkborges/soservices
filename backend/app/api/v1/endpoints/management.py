@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,15 +17,20 @@ from app.core.config import settings
 from app.db.base import get_db
 from app.middleware.auth import get_current_user
 from app.models import (
+    Alert,
     AlertRule,
     Extension,
     ExtensionConfig,
     Gateway,
     Host,
     HostMetric,
+    IdsAlert,
     LogEntry,
     NetworkAsset,
     OtelTrace,
+    RumEvent,
+    SecurityEvent,
+    Session,
     SyntheticTest,
     Task,
     Tenant,
@@ -35,10 +41,30 @@ from app.services.runtime_monitor import list_instance_metrics
 from app.services.gateway_routing import gateway_health
 from app.services.runtime_tasks import cancel_runtime_task, launch_runtime_task, run_network_discovery, run_snmp_get, run_snmp_refresh
 from app.services.mirror_tenant_service import ensure_mirror_tenant
-from app.services.license_service import tenant_license_codes
+from app.services.license_service import LICENSE_BILLING_UNIT_CATALOG, merge_billing_config, simulate_billing, tenant_license_codes
 
 router = APIRouter(tags=["management"])
 NETWORK_ASSET_TYPES = {"network", "switch", "router", "firewall", "ap", "hub", "access_point", "wifi", "wireless", "printer", "ups"}
+DEFAULT_DISCOVERY_PORTS = [
+    21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 161, 389, 443, 445, 465, 514, 587, 636,
+    993, 995, 1433, 1521, 2049, 2375, 2376, 3000, 3306, 3389, 5000, 5432, 5601, 5672,
+    5900, 5985, 5986, 6379, 7001, 7002, 8000, 8080, 8081, 8161, 8443, 8500, 8888, 9000,
+    9042, 9092, 9200, 9300, 9418, 9443, 10050, 11211, 15672, 27017, 27018, 27019,
+]
+PERMISSION_GROUPS = {
+    "applications": {"label": "Usuarios Aplicacoes", "role": "operator"},
+    "databases": {"label": "Usuarios Bancos de Dados", "role": "operator"},
+    "security": {"label": "Usuarios Seguranca", "role": "operator"},
+    "administrators": {"label": "Usuarios Administradores", "role": "admin"},
+    "networks": {"label": "Usuarios Redes", "role": "operator"},
+    "viewer": {"label": "Usuarios Leitura", "role": "viewer"},
+}
+PERMISSION_VIEWS = {
+    "dashboard", "onboarding", "hosts", "processes", "services", "applications", "topologies",
+    "dashboards", "databases", "messaging", "orchestration", "synthetics", "network", "security",
+    "incidents", "logs", "traces", "gateways", "agents", "tasks", "alerts", "tickets",
+    "integrations", "users", "settings",
+}
 
 
 def require_admin(user: User) -> None:
@@ -51,17 +77,64 @@ def require_superadmin(user: User) -> None:
         raise HTTPException(status_code=403, detail="Superadmin role required")
 
 
+def slugify(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9-]", "-", (value or "").lower()).strip("-")
+    slug = re.sub(r"-+", "-", slug)
+    return slug or f"tenant-{uuid.uuid4().hex[:8]}"
+
+
+def username_from_email_or_name(email: str | None, name: str) -> str:
+    if email and "@" in email:
+        candidate = email.split("@", 1)[0]
+    else:
+        candidate = name
+    username = re.sub(r"[^a-zA-Z0-9_.-]", "_", (candidate or "").strip()).strip("_.-")
+    return username or f"admin_{uuid.uuid4().hex[:8]}"
+
+
+def normalize_plan(value: str | None) -> str:
+    plan = str(value or "enterprise").replace("PlanType.", "").strip().lower()
+    aliases = {
+        "free": "trial",
+        "demo": "trial",
+        "professional": "professional",
+        "pro": "professional",
+        "starter": "starter",
+        "enterprise": "enterprise",
+        "trial": "trial",
+    }
+    return aliases.get(plan, "enterprise")
+
+
 class TenantCreatePayload(BaseModel):
-    name: str
-    slug: str
-    admin_name: str
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = Field(min_length=1)
+    slug: Optional[str] = None
+    admin_name: Optional[str] = None
     admin_email: Optional[str] = None
-    admin_username: str
+    admin_username: Optional[str] = None
     admin_password: str = Field(min_length=4)
     plan: str = "enterprise"
 
+    @model_validator(mode="before")
+    @classmethod
+    def accept_frontend_aliases(cls, data):
+        if not isinstance(data, dict):
+            return data
+        payload = dict(data)
+        payload["name"] = payload.get("name") or payload.get("company_name") or payload.get("tenant_name")
+        payload["slug"] = payload.get("slug") or payload.get("tenant_slug")
+        payload["admin_name"] = payload.get("admin_name") or payload.get("full_name") or payload.get("name")
+        payload["admin_email"] = payload.get("admin_email") or payload.get("email")
+        payload["admin_username"] = payload.get("admin_username") or payload.get("username") or payload.get("admin_user")
+        payload["admin_password"] = payload.get("admin_password") or payload.get("password") or payload.get("initial_password")
+        return payload
+
 
 class TenantUpdatePayload(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     name: str
     admin_name: Optional[str] = None
     admin_email: Optional[str] = None
@@ -71,7 +144,7 @@ class TenantUpdatePayload(BaseModel):
 
 class DiscoveryPayload(BaseModel):
     cidr: str
-    ports: list[int] = Field(default_factory=lambda: [22, 80, 443, 161, 3389, 514, 8080, 8443])
+    ports: list[int] = Field(default_factory=lambda: DEFAULT_DISCOVERY_PORTS.copy())
     timeout_ms: int = 350
     snmp_community: str = "public"
     gateway_id: Optional[str] = None
@@ -100,11 +173,18 @@ async def select_task_gateway(db: AsyncSession, tenant_id: str, gateway_id: Opti
     query = select(Gateway).where(Gateway.tenant_id == tenant_id, Gateway.status == "online")
     if gateway_id:
         query = query.where(Gateway.id == gateway_id)
-    query = query.order_by(desc(Gateway.last_heartbeat), Gateway.name).limit(20)
-    result = await db.execute(query)
-    for gateway in result.scalars().all():
+        result = await db.execute(query.limit(1))
+        return result.scalar_one_or_none()
+
+    result = await db.execute(query.order_by(desc(Gateway.last_heartbeat), Gateway.name).limit(20))
+    gateways = result.scalars().all()
+    for gateway in gateways:
         modules = ((gateway.config or {}).get("last_metadata") or {}).get("modules") or {}
-        if modules.get("network_discovery") or modules.get("snmp"):
+        configured_modules = (gateway.config or {}).get("modules") or {}
+        if modules.get("network_discovery") or modules.get("snmp") or configured_modules.get("network_discovery") or configured_modules.get("snmp"):
+            return gateway
+    for gateway in gateways:
+        if gateway.type in {"agents", "infra", "security", "proxy"}:
             return gateway
     return None
 
@@ -120,6 +200,11 @@ class AlertRulePayload(BaseModel):
     severity: str = "medium"
     channels: list[str] = Field(default_factory=list)
     use_baseline: bool = False
+    enabled: bool = True
+    entity_ids: list[str] = Field(default_factory=list)
+    tags_filter: list[str] = Field(default_factory=list)
+    baseline_sensitivity: float = 3.0
+    suppress_seconds: int = 300
 
 
 class ExtensionConfigPayload(BaseModel):
@@ -137,6 +222,14 @@ class ExtensionInstancePayload(BaseModel):
     interval_seconds: int = 300
 
 
+class ImpersonatePayload(BaseModel):
+    tenant_id: Optional[str] = None
+    user_id: Optional[str] = None
+    email: Optional[str] = None
+    username: Optional[str] = None
+
+
+@router.get("/platform/tenants")
 @router.get("/tenants")
 async def list_tenants(
     db: AsyncSession = Depends(get_db),
@@ -163,7 +256,44 @@ async def list_tenants(
     ]
 
 
+@router.get("/platform/tenants/{tenant_id}/users")
+async def list_tenant_users(
+    tenant_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_superadmin(user)
+    tenant = await db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    rows = (
+        await db.execute(
+            select(User)
+            .where(User.tenant_id == tenant_id)
+            .order_by(User.role, User.email)
+        )
+    ).scalars().all()
+    users = [
+        {
+            "id": row.id,
+            "tenant_id": row.tenant_id,
+            "username": row.username,
+            "email": row.email,
+            "name": row.full_name or row.username or row.email,
+            "full_name": row.full_name,
+            "role": row.role,
+            "active": row.active,
+            "status": "active" if row.active else "inactive",
+            "must_change_password": row.must_change_password,
+            "last_login": row.last_login.isoformat() if row.last_login else None,
+        }
+        for row in rows
+    ]
+    return {"tenant": {"id": tenant.id, "name": tenant.name, "slug": tenant.slug}, "users": users, "items": users, "results": users}
+
+
 @router.get("/admin/overview")
+@router.get("/platform/stats")
 async def admin_overview(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -199,10 +329,87 @@ async def admin_overview(
         )
     ).all()
     extension_metric_units = {row[0]: int((row[1] or 0) // 100) for row in extension_metric_rows}
+    snmp_asset_rows = (
+        await db.execute(
+            select(
+                NetworkAsset.tenant_id,
+                func.count(NetworkAsset.id).filter(NetworkAsset.snmp_enabled == True),
+                func.count(NetworkAsset.id).filter(NetworkAsset.snmp_enabled == False),
+            ).group_by(NetworkAsset.tenant_id)
+        )
+    ).all()
+    snmp_asset_counts = {row[0]: int(row[1] or 0) for row in snmp_asset_rows}
+    discovered_asset_counts = {row[0]: int(row[2] or 0) for row in snmp_asset_rows}
+    trace_rows = (
+        await db.execute(
+            select(OtelTrace.tenant_id, func.count(OtelTrace.id))
+            .group_by(OtelTrace.tenant_id)
+        )
+    ).all()
+    trace_counts = {row[0]: int(row[1] or 0) for row in trace_rows}
+    rum_rows = (
+        await db.execute(
+            select(RumEvent.tenant_id, func.count(RumEvent.id))
+            .group_by(RumEvent.tenant_id)
+        )
+    ).all()
+    rum_counts = {row[0]: int(row[1] or 0) for row in rum_rows}
+    ids_rows = (
+        await db.execute(
+            select(IdsAlert.tenant_id, func.count(IdsAlert.id))
+            .group_by(IdsAlert.tenant_id)
+        )
+    ).all()
+    ids_counts = {row[0]: int(row[1] or 0) for row in ids_rows}
+    security_event_rows = (
+        await db.execute(
+            select(SecurityEvent.tenant_id, func.count(SecurityEvent.id))
+            .group_by(SecurityEvent.tenant_id)
+        )
+    ).all()
+    security_event_counts = {row[0]: int(row[1] or 0) for row in security_event_rows}
+    security_task_rows = (
+        await db.execute(
+            select(
+                Task.tenant_id,
+                func.count(Task.id).filter(Task.type == "vuln_scan"),
+                func.count(Task.id).filter(Task.type == "pentest"),
+                func.count(Task.id).filter(Task.type == "ids_scan"),
+            ).group_by(Task.tenant_id)
+        )
+    ).all()
+    vuln_task_counts = {row[0]: int(row[1] or 0) for row in security_task_rows}
+    pentest_task_counts = {row[0]: int(row[2] or 0) for row in security_task_rows}
+    ids_task_counts = {row[0]: int(row[3] or 0) for row in security_task_rows}
+    log_volume_rows = (
+        await db.execute(
+            select(
+                LogEntry.tenant_id,
+                func.sum(func.length(LogEntry.message) + func.coalesce(func.length(LogEntry.raw), 0)),
+            ).group_by(LogEntry.tenant_id)
+        )
+    ).all()
+    log_volume_gb = {
+        row[0]: round(float((row[1] or 0) / (1024 ** 3)), 4)
+        for row in log_volume_rows
+    }
+
+    platform_settings = next(
+        (
+            tenant.settings
+            for tenant in tenants
+            if isinstance(tenant.settings, dict) and tenant.settings.get("internal_platform")
+        ),
+        {},
+    )
+    if not isinstance(platform_settings, dict):
+        platform_settings = {}
+    billing_config = merge_billing_config(platform_settings.get("license_billing"))
 
     tenant_items = []
     for tenant in tenants:
         internal = bool((tenant.settings or {}).get("internal_platform"))
+        tenant_settings = tenant.settings if isinstance(tenant.settings, dict) else {}
         consumption = {
             "hosts": int(host_counts.get(tenant.id, 0)),
             "hosts_full": int(host_full_counts.get(tenant.id, 0)),
@@ -211,12 +418,51 @@ async def admin_overview(
             "users": int(user_counts.get(tenant.id, 0)),
             "synthetics": int(synthetic_counts.get(tenant.id, 0)),
             "extension_units": int(extension_metric_units.get(tenant.id, 0)),
+            "snmp_assets": int(snmp_asset_counts.get(tenant.id, 0)),
+            "discovered_assets": int(discovered_asset_counts.get(tenant.id, 0)),
+            "logs_gb": float(log_volume_gb.get(tenant.id, 0.0)),
+            "trace_count": int(trace_counts.get(tenant.id, 0)),
+            "rum_events": int(rum_counts.get(tenant.id, 0)),
+            "ids_alerts": int(ids_counts.get(tenant.id, 0)),
+            "security_events": int(security_event_counts.get(tenant.id, 0)),
+            "vulnerability_scans": int(vuln_task_counts.get(tenant.id, 0)),
+            "pentest_runs": int(pentest_task_counts.get(tenant.id, 0)),
+            "ids_tasks": int(ids_task_counts.get(tenant.id, 0)),
         }
         consumption["weighted_units"] = (
             consumption["hosts"] * 2
             + consumption["network_assets"]
             + consumption["synthetics"]
             + consumption["extension_units"]
+        )
+        consumption["billing_units"] = {
+            "hosts_infra_hours": consumption["hosts_infra"] * 24 * 30,
+            "hosts_full_hours": consumption["hosts_full"] * 24 * 30,
+            "logs_gb": round(consumption["logs_gb"], 3),
+            "snmp_devices": consumption["snmp_assets"],
+            "discovered_devices": consumption["discovered_assets"],
+            "security_units": (
+                consumption["ids_alerts"]
+                + consumption["security_events"]
+                + consumption["vulnerability_scans"]
+                + consumption["pentest_runs"]
+                + consumption["ids_tasks"]
+            ),
+            "vulnerability_host_scans": consumption["vulnerability_scans"],
+            "vulnerability_app_scans": 0,
+            "pentest_units": consumption["pentest_runs"],
+            "observability_units": max(
+                consumption["hosts_full"],
+                int((consumption["trace_count"] + consumption["rum_events"]) / 1000),
+            ),
+            "integration_metric_units": consumption["extension_units"],
+        }
+        billing = simulate_billing(
+            consumption["billing_units"],
+            billing_config,
+            plan=str(tenant.plan).replace("PlanType.", ""),
+            internal=internal,
+            assigned_package=str(tenant_settings.get("billing_package") or "").strip() or None,
         )
         tenant_items.append(
             {
@@ -230,15 +476,32 @@ async def admin_overview(
                 "max_agents": tenant.max_agents,
                 "max_users": tenant.max_users,
                 "consumption": consumption,
+                "billing": billing,
+                "assigned_billing_package": tenant_settings.get("billing_package"),
             }
         )
 
     customer_tenants = [tenant for tenant in tenant_items if not tenant["internal"]]
+    payg_total = round(sum(float(item["billing"]["payg_total"]) for item in customer_tenants), 2)
+    best_total = round(sum(float((item["billing"].get("selected_option") or item["billing"]["best_option"])["total"]) for item in customer_tenants), 2)
     return {
         "platform": {
             "name": "LAS Plataforma de Monitoramento e Observabilidade",
             "api_url": "https://api.soservices.com.br",
             "frontend_url": "https://las.soservices.com.br",
+        },
+        "billing_config": {
+            "currency": billing_config["currency"],
+            "billing_cycle": billing_config["billing_cycle"],
+            "notes": billing_config["notes"],
+            "units": [
+                {
+                    "code": code,
+                    **LICENSE_BILLING_UNIT_CATALOG[code],
+                    **billing_config["units"][code],
+                }
+                for code in LICENSE_BILLING_UNIT_CATALOG
+            ],
         },
         "summary": {
             "tenant_customers": len(customer_tenants),
@@ -247,6 +510,12 @@ async def admin_overview(
             "network_assets": sum(item["consumption"]["network_assets"] for item in customer_tenants),
             "users": sum(item["consumption"]["users"] for item in customer_tenants),
             "synthetics": sum(item["consumption"]["synthetics"] for item in customer_tenants),
+        },
+        "billing_summary": {
+            "payg_total": payg_total,
+            "best_total": best_total,
+            "estimated_savings": round(max(0.0, payg_total - best_total), 2),
+            "customer_tenants": len(customer_tenants),
         },
         "tenants": tenant_items,
     }
@@ -353,6 +622,7 @@ async def admin_runtime(
     }
 
 
+@router.post("/platform/tenants")
 @router.post("/tenants")
 async def create_tenant(
     payload: TenantCreatePayload,
@@ -360,9 +630,11 @@ async def create_tenant(
     user: User = Depends(get_current_user),
 ):
     require_superadmin(user)
-    slug = re.sub(r"[^a-z0-9-]", "-", payload.slug.lower()).strip("-")
+    slug = slugify(payload.slug or payload.name)
     admin_email = (payload.admin_email or "").strip() or None
-    admin_user_email = admin_email or f"{payload.admin_username}@tenant.local"
+    admin_username = (payload.admin_username or username_from_email_or_name(admin_email, payload.admin_name or payload.name)).strip()
+    admin_name = (payload.admin_name or admin_username or payload.name).strip()
+    admin_user_email = admin_email or f"{admin_username}@tenant.local"
     tenant_exists_conditions = [Tenant.slug == slug]
     if admin_email:
         tenant_exists_conditions.append(Tenant.admin_email == admin_email)
@@ -370,13 +642,20 @@ async def create_tenant(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Tenant slug or admin email already exists")
 
+    user_exists_conditions = [User.username == admin_username]
+    if admin_email:
+        user_exists_conditions.append(User.email == admin_email)
+    existing_user = await db.execute(select(User).where(or_(*user_exists_conditions)))
+    if existing_user.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Admin username or email already exists")
+
     tenant = Tenant(
         id=str(uuid.uuid4()),
         name=payload.name,
         slug=slug,
-        admin_name=payload.admin_name,
+        admin_name=admin_name,
         admin_email=admin_email,
-        plan=payload.plan,
+        plan=normalize_plan(payload.plan),
         status="active",
         max_hosts=1000,
         max_agents=1000,
@@ -398,9 +677,9 @@ async def create_tenant(
     admin_user = User(
         id=str(uuid.uuid4()),
         tenant_id=tenant.id,
-        username=payload.admin_username,
+        username=admin_username,
         email=admin_user_email,
-        full_name=payload.admin_name,
+        full_name=admin_name,
         password_hash=hash_password(payload.admin_password),
         role="admin",
         active=True,
@@ -415,6 +694,8 @@ async def create_tenant(
     return {"status": "created", "tenant_id": tenant.id, "admin_user_id": admin_user.id}
 
 
+@router.put("/platform/tenants/{tenant_id}")
+@router.patch("/platform/tenants/{tenant_id}")
 @router.put("/tenants/{tenant_id}")
 async def update_tenant(
     tenant_id: str,
@@ -430,9 +711,60 @@ async def update_tenant(
     tenant.admin_name = payload.admin_name or tenant.admin_name
     tenant.admin_email = payload.admin_email or tenant.admin_email
     tenant.status = payload.status
-    tenant.plan = payload.plan
+    tenant.plan = normalize_plan(payload.plan)
     await db.commit()
     return {"status": "saved"}
+
+
+@router.post("/platform/impersonate")
+@router.post("/admin/impersonate")
+async def impersonate_user(
+    payload: ImpersonatePayload,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_superadmin(user)
+    query = select(User).where(User.active == True)
+    if payload.user_id:
+        query = query.where(User.id == payload.user_id)
+    elif payload.email:
+        query = query.where(User.email == payload.email.strip().lower())
+    elif payload.username:
+        query = query.where(User.username == payload.username.strip())
+    elif payload.tenant_id:
+        query = query.where(User.tenant_id == payload.tenant_id, User.role.in_(["admin", "operator"]))
+    else:
+        raise HTTPException(status_code=422, detail="Inform a user_id, email, username or tenant_id")
+    target_user = (await db.execute(query.order_by(User.role, User.email).limit(1))).scalar_one_or_none()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="Target user not found")
+    tenant = await db.get(Tenant, target_user.tenant_id)
+    session = Session(
+        id=str(uuid.uuid4()),
+        token=secrets.token_urlsafe(32),
+        user_id=target_user.id,
+        tenant_id=target_user.tenant_id,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=4),
+        last_activity=datetime.now(timezone.utc),
+        active=True,
+    )
+    db.add(session)
+    await db.commit()
+    return {
+        "status": "ok",
+        "access_token": session.token,
+        "token_type": "bearer",
+        "expires_in": 4 * 60 * 60,
+        "impersonated_user": {
+            "id": target_user.id,
+            "username": target_user.username,
+            "email": target_user.email,
+            "name": target_user.full_name,
+            "role": target_user.role,
+            "tenant_id": target_user.tenant_id,
+            "tenant_name": tenant.name if tenant else None,
+        },
+    }
 
 
 @router.get("/network-assets")
@@ -692,6 +1024,43 @@ async def list_tasks(
     ]
 
 
+@router.get("/tasks/{task_id}")
+async def get_task_detail(
+    task_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    task = await db.get(Task, task_id)
+    if not task or task.tenant_id != user.tenant_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+    logs = list(task.logs or [])
+    if task.error and not any(str(item.get("message") or item.get("msg") or "").strip() == task.error for item in logs if isinstance(item, dict)):
+        logs.append(
+            {
+                "ts": (task.completed_at or task.started_at or datetime.now(timezone.utc)).isoformat(),
+                "level": "error",
+                "message": task.error,
+            }
+        )
+    return {
+        "id": task.id,
+        "name": task.name,
+        "type": task.type,
+        "status": task.status,
+        "priority": task.priority,
+        "target": task.target,
+        "description": task.description,
+        "progress": task.progress,
+        "error": task.error,
+        "result": task.result or {},
+        "logs": logs,
+        "scheduled_at": task.scheduled_at.isoformat() if task.scheduled_at else None,
+        "started_at": task.started_at.isoformat() if task.started_at else None,
+        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        "recurrence": task.recurrence,
+    }
+
+
 @router.post("/tasks/{task_id}/cancel")
 async def cancel_task(
     task_id: str,
@@ -724,6 +1093,8 @@ async def list_alert_rules(
             "name": rule.name,
             "description": rule.description,
             "entity_type": rule.entity_type,
+            "entity_ids": rule.entity_ids or [],
+            "tags_filter": rule.tags_filter or [],
             "metric": rule.metric,
             "condition_op": rule.condition_op,
             "threshold_value": rule.threshold_value,
@@ -732,6 +1103,8 @@ async def list_alert_rules(
             "enabled": rule.enabled,
             "channels": rule.channels or [],
             "use_baseline": rule.use_baseline,
+            "baseline_sensitivity": rule.baseline_sensitivity,
+            "suppress_seconds": rule.suppress_seconds,
         }
         for rule in result.scalars().all()
     ]
@@ -754,15 +1127,94 @@ async def create_alert_rule(
         condition_op=payload.condition_op,
         threshold_value=payload.threshold_value,
         duration_seconds=payload.duration_seconds,
+        entity_ids=payload.entity_ids,
+        tags_filter=payload.tags_filter,
         severity=payload.severity,
         channels=payload.channels,
         use_baseline=payload.use_baseline,
-        enabled=True,
+        baseline_sensitivity=payload.baseline_sensitivity,
+        suppress_seconds=payload.suppress_seconds,
+        enabled=payload.enabled,
         created_by=user.id,
     )
     db.add(rule)
     await db.commit()
     return {"status": "created", "rule_id": rule.id}
+
+
+@router.put("/alerts/rules/{rule_id}")
+@router.patch("/alerts/rules/{rule_id}")
+async def update_alert_rule(
+    rule_id: str,
+    payload: AlertRulePayload,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_admin(user)
+    rule = await db.get(AlertRule, rule_id)
+    if not rule or rule.tenant_id != user.tenant_id:
+        raise HTTPException(status_code=404, detail="Alert rule not found")
+    rule.name = payload.name
+    rule.description = payload.description
+    rule.entity_type = payload.entity_type
+    rule.entity_ids = payload.entity_ids
+    rule.tags_filter = payload.tags_filter
+    rule.metric = payload.metric
+    rule.condition_op = payload.condition_op
+    rule.threshold_value = payload.threshold_value
+    rule.duration_seconds = payload.duration_seconds
+    rule.severity = payload.severity
+    rule.channels = payload.channels
+    rule.use_baseline = payload.use_baseline
+    rule.baseline_sensitivity = payload.baseline_sensitivity
+    rule.suppress_seconds = payload.suppress_seconds
+    rule.enabled = payload.enabled
+    await db.commit()
+    return {"status": "saved", "rule_id": rule.id}
+
+
+@router.delete("/alerts/rules/{rule_id}")
+async def delete_alert_rule(
+    rule_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_admin(user)
+    rule = await db.get(AlertRule, rule_id)
+    if not rule or rule.tenant_id != user.tenant_id:
+        raise HTTPException(status_code=404, detail="Alert rule not found")
+    await db.delete(rule)
+    await db.commit()
+    return {"status": "deleted", "rule_id": rule_id}
+
+
+@router.get("/alerts")
+async def list_alerts(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Alert)
+        .where(Alert.tenant_id == user.tenant_id)
+        .order_by(desc(Alert.triggered_at))
+        .limit(300)
+    )
+    return [
+        {
+            "id": alert.id,
+            "name": alert.name,
+            "description": alert.description,
+            "severity": alert.severity,
+            "status": alert.status,
+            "entity_type": alert.entity_type,
+            "entity_name": alert.entity_name,
+            "metric": alert.metric,
+            "observed_value": alert.observed_value,
+            "threshold_value": alert.threshold_value,
+            "triggered_at": alert.triggered_at.isoformat() if alert.triggered_at else None,
+        }
+        for alert in result.scalars().all()
+    ]
 
 
 @router.get("/extensions")
@@ -951,8 +1403,6 @@ async def run_extension_instance_now(
         raise HTTPException(status_code=404, detail="Extension not found")
 
     run_on = (instance.run_on or "auto").lower()
-    if run_on in {"agent"}:
-        raise HTTPException(status_code=400, detail="Agent execution is not available yet. Use gateway execution.")
 
     gateway = await select_extension_gateway(db, user.tenant_id, instance.gateway_type or "integrations")
     if not gateway:
@@ -963,6 +1413,7 @@ async def run_extension_instance_now(
         "instance_id": instance.id,
         "instance_name": instance.name,
         "config": instance.config or {},
+        "preferred_executor": run_on,
     }
     task = Task(
         id=str(uuid.uuid4()),
@@ -972,7 +1423,7 @@ async def run_extension_instance_now(
         status="pending",
         priority="medium",
         target=instance.id,
-        description=f"Execucao de extensao via gateway {gateway.name}.",
+        description=f"Execucao de extensao via gateway {gateway.name} com executor preferencial {run_on}.",
         scheduled_at=datetime.now(timezone.utc),
         created_by=user.id,
         result={
@@ -1044,6 +1495,8 @@ async def get_host_settings(
         "log_paths": host.log_paths or [],
         "detected_log_paths": (host.custom_config or {}).get("detected_log_paths") or [],
         "detected_log_paths_at": (host.custom_config or {}).get("detected_log_paths_at"),
+        "technology_inventory": (host.custom_config or {}).get("technology_inventory") or [],
+        "technology_inventory_at": (host.custom_config or {}).get("technology_inventory_at"),
     }
 
 

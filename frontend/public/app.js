@@ -12,6 +12,7 @@ const state = {
 const PLATFORM_VIEWS = ["dashboard", "tenants", "licensing", "settings"];
 const TENANT_VIEWS = [
   "dashboard",
+  "onboarding",
   "hosts",
   "processes",
   "services",
@@ -24,11 +25,19 @@ const TENANT_VIEWS = [
   "synthetics",
   "network",
   "security",
+  "vulnerabilities",
+  "ids",
+  "pentest",
   "incidents",
   "logs",
   "traces",
+  "gateways",
+  "agents",
+  "tasks",
+  "alerts",
   "tickets",
   "integrations",
+  "users",
   "settings",
 ];
 const titleMap = {
@@ -46,6 +55,9 @@ const titleMap = {
   synthetics: "Testes Sinteticos",
   network: "Ativos de Rede",
   security: "Seguranca",
+  vulnerabilities: "Vulnerabilidades",
+  ids: "IDS",
+  pentest: "Pentest",
   incidents: "Problemas/Incidentes",
   logs: "Logs",
   traces: "Traces",
@@ -60,6 +72,46 @@ const titleMap = {
   licensing: "Licencas",
   settings: "Configuracoes Tenant",
 };
+const permissionGroups = {
+  applications: { label: "Usuarios aplicacoes", role: "operator" },
+  databases: { label: "Usuarios bancos de dados", role: "operator" },
+  security: { label: "Usuarios seguranca", role: "operator" },
+  administrators: { label: "Usuarios administradores", role: "admin" },
+  networks: { label: "Usuarios redes", role: "operator" },
+  viewer: { label: "Somente leitura", role: "viewer" },
+};
+const alertEntityTypes = [
+  ["host", "Host"],
+  ["network_asset", "Ativo de rede"],
+  ["service", "Servico"],
+  ["process", "Processo"],
+  ["application", "Aplicacao"],
+  ["log", "Log"],
+  ["synthetic", "Teste sintetico"],
+  ["gateway", "Gateway"],
+];
+const alertMetrics = [
+  ["cpu_usage", "CPU"],
+  ["memory_usage", "Memoria"],
+  ["disk_usage", "Disco"],
+  ["net_in_rate", "Rede IN"],
+  ["net_out_rate", "Rede OUT"],
+  ["status", "Status"],
+  ["process.cpu", "Processo CPU"],
+  ["process.memory", "Processo memoria"],
+  ["service.errors", "Erros de servico"],
+  ["log_query.count", "Consulta em logs"],
+  ["network.port.utilization", "Utilizacao de porta"],
+  ["network.port.errors", "Erros de porta"],
+  ["synthetic.response_ms", "Sintetico resposta"],
+  ["synthetic.availability", "Sintetico disponibilidade"],
+];
+const defaultDiscoveryPorts = [
+  21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 161, 389, 443, 445, 465, 514, 587, 636,
+  993, 995, 1433, 1521, 2049, 2375, 2376, 3000, 3306, 3389, 5000, 5432, 5601, 5672,
+  5900, 5985, 5986, 6379, 7001, 7002, 8000, 8080, 8081, 8161, 8443, 8500, 8888, 9000,
+  9042, 9092, 9200, 9300, 9418, 9443, 10050, 11211, 15672, 27017, 27018, 27019,
+];
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -107,10 +159,32 @@ async function api(path, options = {}) {
   const payload = contentType.includes("application/json")
     ? await response.json()
     : await response.text();
+  if (path.startsWith("/api/") && !contentType.includes("application/json")) {
+    const preview = typeof payload === "string" ? payload.slice(0, 120) : "";
+    throw new Error(`API retornou conteudo invalido para ${path}. Verifique proxy/edge.${preview ? ` Preview: ${preview}` : ""}`);
+  }
   if (!response.ok) {
-    throw new Error(typeof payload === "string" ? payload : payload.detail || JSON.stringify(payload));
+    throw new Error(formatApiError(payload));
   }
   return payload;
+}
+
+function formatApiError(payload) {
+  if (typeof payload === "string") return payload;
+  const detail = payload?.detail ?? payload?.message ?? payload?.error ?? payload;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((item) => {
+      if (typeof item === "string") return item;
+      const loc = Array.isArray(item?.loc) ? item.loc.join(".") : item?.loc;
+      const msg = item?.msg || item?.message || JSON.stringify(item);
+      return loc ? `${loc}: ${msg}` : msg;
+    }).join(" | ");
+  }
+  if (detail && typeof detail === "object") {
+    return detail.msg || detail.message || JSON.stringify(detail);
+  }
+  return "Erro na requisicao.";
 }
 
 const esc = (value) =>
@@ -125,6 +199,9 @@ const trunc = (value, max = 160) => {
 };
 const fmt = (value) => (value ? new Date(value).toLocaleString("pt-BR") : "-");
 const num = (value) => Number(value || 0).toLocaleString("pt-BR");
+const money = (value, currency = "BRL") => Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency });
+const maybeNum = (value, suffix = "") => (value === null || value === undefined || value === "" ? "-" : `${Number(value).toLocaleString("pt-BR")}${suffix}`);
+const maybeUnit = (value, unit) => (value === null || value === undefined || value === "" ? "-" : `${Number(value).toLocaleString("pt-BR")} ${unit}`);
 const status = (value) => {
   const text = String(value || "offline").toLowerCase();
   const css =
@@ -223,6 +300,8 @@ const bytes = (value) => {
   if (numeric >= 1024) return `${(numeric / 1024).toFixed(1)} KB`;
   return `${numeric} B`;
 };
+const asArray = (value) => (Array.isArray(value) ? value : []);
+const asObject = (value) => (value && typeof value === "object" && !Array.isArray(value) ? value : {});
 const incidentDuration = (incident) => {
   const start = incident.triggered_at ? new Date(incident.triggered_at) : null;
   const end = incident.resolved_at ? new Date(incident.resolved_at) : new Date();
@@ -236,6 +315,19 @@ const actionMenu = (items) =>
   `<details class="kebab"><summary aria-label="Acoes">⋮</summary><div>${items.map((item) => item.disabled ? `<span class="disabled">${esc(item.label)}</span>` : `<button type="button" class="${esc(item.className || "")}" ${item.attrs || ""}>${esc(item.label)}</button>`).join("")}</div></details>`;
 const jsonBlock = (value) => `<pre><code>${esc(JSON.stringify(value || {}, null, 2))}</code></pre>`;
 const kvTable = (title, value) => `<article class="card"><h3>${esc(title)}</h3>${value && Object.keys(value).length ? table(["Chave", "Valor"], Object.entries(value).map(([key, item]) => [esc(key), esc(typeof item === "object" ? JSON.stringify(item) : item)])) : `<p class="muted">Sem dados.</p>`}</article>`;
+const csvValue = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+const downloadCsv = (filename, rows) => {
+  const csv = rows.map((row) => row.map(csvValue).join(";")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+};
 const queryString = (params) => {
   const search = new URLSearchParams();
   Object.entries(params || {}).forEach(([key, value]) => {
@@ -276,9 +368,26 @@ function isPlatformAdmin() {
 }
 
 function updateNavigation() {
-  const allowed = new Set(isPlatformAdmin() ? PLATFORM_VIEWS : TENANT_VIEWS);
+  const tenantPermissions = Array.isArray(state.currentUser?.permissions) ? state.currentUser.permissions : [];
+  const tenantViews = tenantPermissions.length && !["admin", "superadmin"].includes(state.currentUser?.role)
+    ? TENANT_VIEWS.filter((view) => tenantPermissions.includes(view) || view === "dashboard")
+    : TENANT_VIEWS;
+  const allowed = new Set(isPlatformAdmin() ? PLATFORM_VIEWS : tenantViews);
   $$(".nav-link").forEach((button) => {
+    if (!button.dataset.view) return;
     button.classList.toggle("hidden", !allowed.has(button.dataset.view));
+  });
+  $$(".nav-section").forEach((section) => {
+    let cursor = section.nextElementSibling;
+    let hasVisibleItem = false;
+    while (cursor && !cursor.classList.contains("nav-section")) {
+      if (cursor.classList?.contains("nav-link") && !cursor.classList.contains("hidden")) {
+        hasVisibleItem = true;
+        break;
+      }
+      cursor = cursor.nextElementSibling;
+    }
+    section.classList.toggle("hidden", !hasVisibleItem);
   });
   if (!allowed.has(state.view)) {
     state.view = isPlatformAdmin() ? "dashboard" : "hosts";
@@ -289,6 +398,7 @@ function setView(view) {
   state.view = view;
   $("#view-title").textContent = titleMap[view] || view;
   $$(".nav-link").forEach((button) => {
+    if (!button.dataset.view) return;
     button.classList.toggle("active", button.dataset.view === view);
   });
 }
@@ -314,24 +424,28 @@ async function bootstrap() {
 }
 
 async function renderTenantDashboard() {
-  const data = await api("/api/v1/dashboard/summary");
-  const okHosts = Number(data.counters.hosts_online || 0);
-  const totalHosts = Number(data.counters.hosts_total || 0);
-  const problemHosts = data.problem_hosts || [];
-  const hostRows = data.hosts.map((host) => [
+  const data = asObject(await api("/api/v1/dashboard/summary"));
+  const counters = asObject(data.counters);
+  const hosts = asArray(data.hosts);
+  const logs = asArray(data.logs);
+  const incidents = asArray(data.incidents);
+  const problemHosts = asArray(data.problem_hosts);
+  const okHosts = Number(counters.hosts_online || 0);
+  const totalHosts = Number(counters.hosts_total || 0);
+  const hostRows = hosts.map((host) => [
     `<button class="link-button dashboard-host-link" data-host-id="${esc(host.id)}" type="button"><strong>${esc(host.hostname)}</strong></button><br><small>${esc(host.ip || "-")}</small>`,
     status(host.status),
     `${num(host.cpu_usage)}%`,
     `${num(host.memory_usage)}%`,
     fmt(host.last_seen),
   ]);
-  const logRows = data.logs.map((log) => [
+  const logRows = logs.map((log) => [
     fmt(log.timestamp),
     esc(log.level),
     esc(log.source || "-"),
     esc(log.message),
   ]);
-  const incidentRows = (data.incidents || []).slice(0, 5).map((incident) => [
+  const incidentRows = incidents.slice(0, 5).map((incident) => [
     `<span class="mono">${esc(incident.id.slice(0, 8))}</span>`,
     `<strong>${esc(incident.name)}</strong><br><small>${esc(incident.description || "-")}</small>`,
     status(incident.status),
@@ -342,9 +456,9 @@ async function renderTenantDashboard() {
   render(`
     <section class="grid cards">
       <article class="card stat health-summary"><span class="eyebrow">Hosts status</span><strong>${num(okHosts)}/${num(totalHosts)} hosts OK</strong><p class="muted">${problemHosts.length ? `${num(problemHosts.length)} host(s) com incidentes` : "Sem incidentes em hosts"}</p></article>
-      <article class="card stat"><span class="eyebrow">Gateways</span><strong>${num(data.counters.gateways_total)}</strong><p class="muted">registrados</p></article>
-      <article class="card stat"><span class="eyebrow">Logs</span><strong>${num(data.counters.logs_total)}</strong><p class="muted">ingeridos</p></article>
-      <article class="card stat"><span class="eyebrow">Traces</span><strong>${num(data.counters.traces_total)}</strong><p class="muted">observabilidade</p></article>
+      <article class="card stat"><span class="eyebrow">Gateways</span><strong>${num(counters.gateways_total)}</strong><p class="muted">registrados</p></article>
+      <article class="card stat"><span class="eyebrow">Logs</span><strong>${num(counters.logs_total)}</strong><p class="muted">ingeridos</p></article>
+      <article class="card stat"><span class="eyebrow">Traces</span><strong>${num(counters.traces_total)}</strong><p class="muted">observabilidade</p></article>
     </section>
     ${problemHosts.length ? `<article class="card incident-strip"><h3>Hosts com problemas</h3><div class="incident-links">${problemHosts.map((host) => `<button class="button ghost dashboard-host-link" data-host-id="${esc(host.id)}" type="button">${esc(host.hostname)} - ${esc(host.status || "-")}</button>`).join("")}</div></article>` : ""}
     <section class="grid two">
@@ -357,11 +471,22 @@ async function renderTenantDashboard() {
 }
 
 async function renderPlatformDashboard() {
-  const [data, runtime] = await Promise.all([
+  const [rawData, rawRuntime] = await Promise.all([
     api("/api/v1/admin/overview"),
     api("/api/v1/admin/runtime"),
   ]);
-  const customerRows = data.tenants.map((tenant) => [
+  const data = asObject(rawData);
+  const runtime = asObject(rawRuntime);
+  const summary = asObject(data.summary);
+  const platform = asObject(data.platform);
+  const gatewayHealth = asObject(runtime.gateway_health);
+  const apiCluster = asObject(runtime.api_cluster);
+  const ingestion = asObject(runtime.ingestion_last_24h);
+  const dependencies = asObject(runtime.dependencies);
+  const redis = asObject(dependencies.redis);
+  const postgres = asObject(dependencies.postgres);
+  const clusterDesign = asObject(runtime.cluster_design);
+  const customerRows = asArray(data.tenants).map((tenant) => [
     esc(tenant.name),
     tenant.internal ? "interno" : "cliente",
     num(tenant.consumption.hosts),
@@ -369,7 +494,7 @@ async function renderPlatformDashboard() {
     num(tenant.consumption.synthetics),
     num(tenant.consumption.weighted_units),
   ]);
-  const gatewayRows = runtime.gateway_health.tenants.map((tenant) => [
+  const gatewayRows = asArray(gatewayHealth.tenants).map((tenant) => [
     esc(tenant.tenant_name),
     tenant.internal ? "interno" : "cliente",
     num(tenant.online),
@@ -377,7 +502,7 @@ async function renderPlatformDashboard() {
     num(tenant.offline),
     num(tenant.total),
   ]);
-  const instanceRows = (runtime.api_cluster.instances || []).map((item) => [
+  const instanceRows = asArray(apiCluster.instances).map((item) => [
     `<span class="mono">${esc(item.instance_id)}</span><br><small>${esc(item.hostname || "-")}</small>`,
     esc(item.version || "-"),
     num(item.requests_total),
@@ -389,16 +514,16 @@ async function renderPlatformDashboard() {
   ]);
   render(`
     <section class="grid cards">
-      <article class="card stat"><span class="eyebrow">Clientes</span><strong>${num(data.summary.tenant_customers)}</strong><p class="muted">tenants monitorados</p></article>
-      <article class="card stat"><span class="eyebrow">Hosts</span><strong>${num(data.summary.hosts)}</strong><p class="muted">consumo consolidado</p></article>
-      <article class="card stat"><span class="eyebrow">Ativos</span><strong>${num(data.summary.network_assets)}</strong><p class="muted">ativos de rede</p></article>
-      <article class="card stat"><span class="eyebrow">Sinteticos</span><strong>${num(data.summary.synthetics)}</strong><p class="muted">checks configurados</p></article>
+      <article class="card stat"><span class="eyebrow">Clientes</span><strong>${num(summary.tenant_customers)}</strong><p class="muted">tenants monitorados</p></article>
+      <article class="card stat"><span class="eyebrow">Hosts</span><strong>${num(summary.hosts)}</strong><p class="muted">consumo consolidado</p></article>
+      <article class="card stat"><span class="eyebrow">Ativos</span><strong>${num(summary.network_assets)}</strong><p class="muted">ativos de rede</p></article>
+      <article class="card stat"><span class="eyebrow">Sinteticos</span><strong>${num(summary.synthetics)}</strong><p class="muted">checks configurados</p></article>
     </section>
     <section class="grid two">
       <article class="card">
         <h3>URLs da plataforma</h3>
-        <p><strong>API:</strong> ${esc(data.platform.api_url)}</p>
-        <p><strong>Frontend:</strong> ${esc(data.platform.frontend_url)}</p>
+        <p><strong>API:</strong> ${esc(platform.api_url)}</p>
+        <p><strong>Frontend:</strong> ${esc(platform.frontend_url)}</p>
         <p class="muted">O superadmin observa clientes, licencas e consumo global. A operacao do tenant fica no tenant demo ou nos tenants de clientes.</p>
       </article>
       <article class="card">
@@ -409,20 +534,20 @@ async function renderPlatformDashboard() {
     <section class="grid two">
       <article class="card">
         <h3>Runtime da plataforma</h3>
-        <p><strong>Modo HA API:</strong> ${esc(runtime.api_cluster.mode)}</p>
-        <p><strong>Instancias esperadas:</strong> ${num(runtime.api_cluster.expected_instances)}</p>
-        <p><strong>Instancias ativas previstas:</strong> ${num(runtime.api_cluster.active_instances)}</p>
-        <p><strong>Proxy:</strong> ${esc(runtime.api_cluster.frontend_proxy)}</p>
-        <p><strong>PostgreSQL:</strong> ${esc(runtime.dependencies.postgres.host)}:${esc(runtime.dependencies.postgres.port)} (${esc(runtime.dependencies.postgres.mode)})</p>
-        <p><strong>Redis:</strong> ${esc(runtime.dependencies.redis.host)}:${esc(runtime.dependencies.redis.port)} (${esc(runtime.dependencies.redis.mode)})</p>
-        <p><strong>Sentinels:</strong> ${esc((runtime.dependencies.redis.sentinels || []).join(", ") || "-")}</p>
+        <p><strong>Modo HA API:</strong> ${esc(apiCluster.mode)}</p>
+        <p><strong>Instancias esperadas:</strong> ${num(apiCluster.expected_instances)}</p>
+        <p><strong>Instancias ativas previstas:</strong> ${num(apiCluster.active_instances)}</p>
+        <p><strong>Proxy:</strong> ${esc(apiCluster.frontend_proxy)}</p>
+        <p><strong>PostgreSQL:</strong> ${esc(postgres.host)}:${esc(postgres.port)} (${esc(postgres.mode)})</p>
+        <p><strong>Redis:</strong> ${esc(redis.host)}:${esc(redis.port)} (${esc(redis.mode)})</p>
+        <p><strong>Sentinels:</strong> ${esc(asArray(redis.sentinels).join(", ") || "-")}</p>
       </article>
       <article class="card">
         <h3>Ingestao ultimas 24h</h3>
-        <p><strong>Metricas:</strong> ${num(runtime.ingestion_last_24h.metrics)}</p>
-        <p><strong>Logs:</strong> ${num(runtime.ingestion_last_24h.logs)}</p>
-        <p><strong>Traces:</strong> ${num(runtime.ingestion_last_24h.traces)}</p>
-        <p class="muted">${esc(runtime.cluster_design.tenant_policy)}. Estrategia atual: ${esc(runtime.cluster_design.agent_strategy)}.</p>
+        <p><strong>Metricas:</strong> ${num(ingestion.metrics)}</p>
+        <p><strong>Logs:</strong> ${num(ingestion.logs)}</p>
+        <p><strong>Traces:</strong> ${num(ingestion.traces)}</p>
+        <p class="muted">${esc(clusterDesign.tenant_policy)}. Estrategia atual: ${esc(clusterDesign.agent_strategy)}.</p>
       </article>
     </section>
     <section class="grid two">
@@ -454,28 +579,201 @@ async function renderPlatformDashboard() {
 }
 
 async function renderPlatformLicensing() {
-  const data = await api("/api/v1/admin/overview");
-  const licenseRows = data.tenants
-    .filter((tenant) => !tenant.internal)
-    .map((tenant) => [
-      esc(tenant.name),
-      status(tenant.status),
-      esc(tenant.plan),
-      num(tenant.consumption.hosts_infra ?? (tenant.consumption.hosts || 0)),
-      num(tenant.consumption.hosts_full ?? 0),
-      num(tenant.consumption.hosts),
-      num(tenant.consumption.network_assets),
-      num(tenant.consumption.users),
-      num(tenant.consumption.synthetics),
-      num(tenant.consumption.weighted_units),
-    ]);
+  const [rawOverview, rawBilling] = await Promise.all([
+    api("/api/v1/admin/overview"),
+    api("/api/v1/licenses/admin/billing-config"),
+  ]);
+  const data = asObject(rawOverview);
+  const billing = asObject(rawBilling);
+  const currency = billing.currency || "BRL";
+  const units = asArray(billing.units);
+  const packages = asArray(billing.packages);
+  const discounts = asObject(billing.discounts);
+  const customerTenants = asArray(data.tenants).filter((tenant) => !tenant.internal);
+  const summary = asObject(data.billing_summary);
+  const formatIncludedUnits = (includedUnits) => Object.entries(asObject(includedUnits))
+    .filter(([, value]) => Number(value || 0) > 0)
+    .map(([code, value]) => `${code}: ${value}`)
+    .join("\n");
+  const tenantRows = customerTenants.map((tenant) => {
+    const consumption = asObject(tenant.consumption);
+    const billingUnits = asObject(consumption.billing_units);
+    const billingState = asObject(tenant.billing);
+    const best = asObject(billingState.best_option);
+    const selected = asObject(billingState.selected_option);
+    const effective = Object.keys(selected).length ? selected : best;
+    return {
+      tenant,
+      row: [
+        esc(tenant.name),
+        status(tenant.status),
+        esc(tenant.plan),
+        num(billingUnits.hosts_infra_hours),
+        num(billingUnits.hosts_full_hours),
+        num(billingUnits.snmp_devices),
+        num(billingUnits.discovered_devices),
+        num(billingUnits.observability_units),
+        num(billingUnits.security_units),
+        num(billingUnits.integration_metric_units),
+        maybeNum(billingUnits.logs_gb, " GB"),
+        money(billingState.payg_total, currency),
+        `${esc(effective.label || "-")}<br><small>${money(effective.total, currency)}</small>`,
+        money(best.savings_vs_payg, currency),
+      ],
+      export: [
+        tenant.name,
+        tenant.slug,
+        tenant.plan,
+        tenant.status,
+        billingUnits.hosts_infra_hours || 0,
+        billingUnits.hosts_full_hours || 0,
+        billingUnits.snmp_devices || 0,
+        billingUnits.discovered_devices || 0,
+        billingUnits.observability_units || 0,
+        billingUnits.security_units || 0,
+        billingUnits.integration_metric_units || 0,
+        billingUnits.logs_gb || 0,
+        billingState.payg_total || 0,
+        effective.label || "-",
+        effective.total || 0,
+        best.savings_vs_payg || 0,
+      ],
+    };
+  });
+  const totalEstimate = Number(summary.best_total || 0);
+  const paygEstimate = Number(summary.payg_total || 0);
+  const totalSavings = Number(summary.estimated_savings || Math.max(0, paygEstimate - totalEstimate));
+  const packageRows = packages.map((item) => [
+    `<strong>${esc(item.label || item.code)}</strong><br><small>${esc(item.description || "-")}</small>`,
+    `<label class="check-row"><input type="checkbox" name="package_enabled__${esc(item.code)}" ${item.enabled ? "checked" : ""}> ativo</label>`,
+    `<input name="package_label__${esc(item.code)}" value="${esc(item.label || item.code)}">`,
+    `<input name="package_base_price__${esc(item.code)}" type="number" min="0" step="0.01" value="${esc(item.base_price || 0)}">`,
+    `<input name="package_discount_percent__${esc(item.code)}" type="number" min="0" step="0.01" value="${esc(item.discount_percent || 0)}">`,
+    `<textarea name="package_included_units__${esc(item.code)}" rows="4" placeholder="hosts_infra_hours: 720&#10;logs_gb: 20">${esc(formatIncludedUnits(item.included_units))}</textarea>`,
+  ]);
   render(`
+    <section class="grid cards">
+      <article class="card stat"><span class="eyebrow">Moeda</span><strong>${esc(currency)}</strong><p class="muted">ciclo ${esc(billing.billing_cycle || "monthly")}</p></article>
+      <article class="card stat"><span class="eyebrow">Unidades cobraveis</span><strong>${num(units.filter((item) => item.enabled).length)}</strong><p class="muted">catalogo ativo</p></article>
+      <article class="card stat"><span class="eyebrow">Clientes</span><strong>${num(customerTenants.length)}</strong><p class="muted">tenants faturaveis</p></article>
+      <article class="card stat"><span class="eyebrow">Pay as you go</span><strong>${money(paygEstimate, currency)}</strong><p class="muted">sem pacote</p></article>
+      <article class="card stat"><span class="eyebrow">Melhor simulacao</span><strong>${money(totalEstimate, currency)}</strong><p class="muted">com pacote/desconto</p></article>
+      <article class="card stat"><span class="eyebrow">Economia estimada</span><strong>${money(totalSavings, currency)}</strong><p class="muted">otimizacao comercial</p></article>
+    </section>
+    <section class="grid two">
+      <article class="card">
+        <div class="section-header">
+          <div>
+            <h3>Configuracao comercial das licencas</h3>
+            <p class="muted">Defina precificacao por unidade, pacotes, franquias e descontos por plano.</p>
+          </div>
+        </div>
+        <form id="billing-config-form" class="form-grid">
+          <label>Moeda<input name="currency" value="${esc(currency)}"></label>
+          <label>Ciclo<select name="billing_cycle"><option value="monthly" ${billing.billing_cycle === "monthly" ? "selected" : ""}>Mensal</option><option value="hourly" ${billing.billing_cycle === "hourly" ? "selected" : ""}>Horario</option><option value="custom" ${billing.billing_cycle === "custom" ? "selected" : ""}>Customizado</option></select></label>
+          <label style="grid-column:1/-1">Observacoes<textarea name="notes" placeholder="Regras comerciais, descontos, bundling, franquias">${esc(billing.notes || "")}</textarea></label>
+          <div style="grid-column:1/-1">${table(["Unidade", "Categoria", "Ativa", "Preco", "Franquia", "Excedente", "Rotulo", "Codigo"], units.map((item) => [
+            `<strong>${esc(item.label)}</strong><br><small>${esc(item.description || "-")}</small>`,
+            esc(item.category || "-"),
+            `<label class="check-row"><input type="checkbox" name="enabled__${esc(item.code)}" ${item.enabled ? "checked" : ""}> ativa</label>`,
+            `<input name="price_per_unit__${esc(item.code)}" type="number" min="0" step="0.01" value="${esc(item.price_per_unit)}">`,
+            `<input name="included_units__${esc(item.code)}" type="number" min="0" step="0.01" value="${esc(item.included_units)}">`,
+            `<input name="overage_price__${esc(item.code)}" type="number" min="0" step="0.01" value="${esc(item.overage_price)}">`,
+            `<input name="unit_label__${esc(item.code)}" value="${esc(item.unit_label || "")}">`,
+            `<small>${esc(item.code)}</small>`,
+          ]))}</div>
+          <div style="grid-column:1/-1">${table(["Pacote", "Ativo", "Nome exibicao", "Base", "Desc.%", "Unidades inclusas"], packageRows)}</div>
+          <div style="grid-column:1/-1">${table(["Desconto", "Valor"], [
+            ["Trial", `<input name="discount_trial_percent" type="number" min="0" step="0.01" value="${esc(discounts.trial_percent || 0)}">`],
+            ["Interno", `<input name="discount_internal_percent" type="number" min="0" step="0.01" value="${esc(discounts.internal_percent || 0)}">`],
+            ["Starter", `<input name="discount_starter_percent" type="number" min="0" step="0.01" value="${esc(discounts.starter_percent || 0)}">`],
+            ["Professional", `<input name="discount_professional_percent" type="number" min="0" step="0.01" value="${esc(discounts.professional_percent || 0)}">`],
+            ["Enterprise", `<input name="discount_enterprise_percent" type="number" min="0" step="0.01" value="${esc(discounts.enterprise_percent || 0)}">`],
+          ])}</div>
+        </form>
+        <div class="actions" style="margin-top:14px"><button id="save-billing-config" class="button primary" type="button">Salvar configuracao</button><button id="export-billing-csv" class="button ghost" type="button">Exportar CSV</button></div>
+        <p id="billing-message" class="message"></p>
+      </article>
+      <article class="card">
+        <h3>Leitura de consumo comercial</h3>
+        <p><strong>Logs:</strong> volume aproximado persistido em GB por tenant.</p>
+        <p><strong>Hosts:</strong> estimativa mensal em host-hora baseada nos hosts atuais infra/full.</p>
+        <p><strong>SNMP:</strong> dispositivos com SNMP ativo x dispositivos apenas discovered.</p>
+        <p><strong>Seguranca:</strong> pool somando IDS, eventos, scans e pentest.</p>
+        <p><strong>Observabilidade:</strong> unidade consolidada para OTel/RUM/traces.</p>
+        <p><strong>Pacotes:</strong> o simulador compara PAYG com bundles comerciais e aplica o desconto do plano do tenant.</p>
+        <p class="muted">Esse bloco já serve como base para precificação inicial, pacotes MSP e negociação comercial por tenant.</p>
+      </article>
+    </section>
     <article class="card">
-      <h3>Licenciamento e consumo por tenant</h3>
-      ${licenseRows.length ? table(["Tenant", "Status", "Plano", "Hosts Infra", "Hosts Full", "Hosts Total", "Ativos", "Usuarios", "Sinteticos", "Unidades"], licenseRows) : `<p class="muted">Nenhum tenant cliente disponivel.</p>`}
+      <h3>Consumo estimado por tenant</h3>
+      ${tenantRows.length ? table(["Tenant", "Status", "Plano", "Host-h infra", "Host-h full", "SNMP", "Discovery", "Observab.", "Seguranca", "Integracoes", "Logs", "PAYG", "Melhor opcao", "Economia"], tenantRows.map((item) => item.row)) : `<p class="muted">Nenhum tenant cliente disponivel.</p>`}
       <p class="muted">O tenant demo concentra o painel operacional atual. O superadmin observa clientes e consumo global.</p>
     </article>
   `);
+  const parseIncludedUnits = (text) => {
+    const raw = String(text || "").trim();
+    if (!raw) return {};
+    return raw.split(/\r?\n/).reduce((acc, line) => {
+      const [key, value] = line.split(":").map((item) => item.trim());
+      if (key && value !== undefined && value !== "") {
+        acc[key] = Number(value);
+      }
+      return acc;
+    }, {});
+  };
+  $("#save-billing-config").addEventListener("click", async () => {
+    const form = $("#billing-config-form");
+    const payload = {
+      currency: form.currency.value || "BRL",
+      billing_cycle: form.billing_cycle.value || "monthly",
+      notes: form.notes.value || "",
+      units: {},
+      packages: {},
+      discounts: {
+        trial_percent: Number(form.elements.discount_trial_percent.value || 0),
+        internal_percent: Number(form.elements.discount_internal_percent.value || 0),
+        starter_percent: Number(form.elements.discount_starter_percent.value || 0),
+        professional_percent: Number(form.elements.discount_professional_percent.value || 0),
+        enterprise_percent: Number(form.elements.discount_enterprise_percent.value || 0),
+      },
+    };
+    units.forEach((item) => {
+      payload.units[item.code] = {
+        enabled: form.elements[`enabled__${item.code}`].checked,
+        price_per_unit: Number(form.elements[`price_per_unit__${item.code}`].value || 0),
+        included_units: Number(form.elements[`included_units__${item.code}`].value || 0),
+        overage_price: Number(form.elements[`overage_price__${item.code}`].value || 0),
+        unit_label: form.elements[`unit_label__${item.code}`].value || item.unit_label || "",
+        notes: item.notes || "",
+      };
+    });
+    packages.forEach((item) => {
+      payload.packages[item.code] = {
+        enabled: form.elements[`package_enabled__${item.code}`].checked,
+        label: form.elements[`package_label__${item.code}`].value || item.label || item.code,
+        description: item.description || "",
+        base_price: Number(form.elements[`package_base_price__${item.code}`].value || 0),
+        discount_percent: Number(form.elements[`package_discount_percent__${item.code}`].value || 0),
+        included_units: parseIncludedUnits(form.elements[`package_included_units__${item.code}`].value),
+        notes: item.notes || "",
+      };
+    });
+    try {
+      await api("/api/v1/licenses/admin/billing-config", { method: "PUT", body: JSON.stringify(payload) });
+      $("#billing-message").textContent = "Configuracao comercial salva.";
+      await renderPlatformLicensing();
+    } catch (error) {
+      $("#billing-message").textContent = error.message;
+    }
+  });
+  $("#export-billing-csv").addEventListener("click", () => {
+    const rows = [
+      ["Tenant", "Slug", "Plano", "Status", "Host-h Infra", "Host-h Full", "SNMP", "Discovery", "Observabilidade", "Seguranca", "Integracoes", "Logs GB", "PAYG", "Melhor Opcao", "Total Melhor Opcao", "Economia"],
+      ...tenantRows.map((item) => item.export),
+    ];
+    downloadCsv(`las-licenciamento-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+  });
 }
 
 async function renderTenants() {
@@ -497,19 +795,31 @@ async function renderTenants() {
         <h3>Novo tenant</h3>
         <form id="tenant-form" class="form-grid">
           <label>Nome<input name="name" required></label>
-          <label>Slug<input name="slug" required></label>
+          <label>Slug<input name="slug" placeholder="gerado automaticamente se vazio"></label>
           <label>Admin nome<input name="admin_name" required></label>
           <label>Admin email<input name="admin_email" placeholder="opcional"></label>
-          <label>Admin usuario<input name="admin_username" required></label>
-          <label>Senha inicial<input name="admin_password" value="admin123" required></label>
+          <label>Admin usuario<input name="admin_username" placeholder="gerado pelo e-mail se vazio"></label>
+          <label>Senha inicial<input name="admin_password" type="password" value="admin123" required></label>
+          <label>Plano<select name="plan"><option value="enterprise">enterprise</option><option value="trial">trial</option><option value="professional">professional</option><option value="starter">starter</option></select></label>
         </form>
         <div class="actions" style="margin-top:14px"><button id="save-tenant" class="button primary" type="button">Criar tenant</button></div>
         <p id="tenant-message" class="message"></p>
       </article>
     </section>
   `);
+  const tenantForm = $("#tenant-form");
+  tenantForm.name.addEventListener("input", () => {
+    if (!tenantForm.slug.value.trim()) {
+      tenantForm.slug.value = tenantForm.name.value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    }
+  });
+  tenantForm.admin_email.addEventListener("input", () => {
+    if (!tenantForm.admin_username.value.trim() && tenantForm.admin_email.value.includes("@")) {
+      tenantForm.admin_username.value = tenantForm.admin_email.value.split("@")[0].replace(/[^a-zA-Z0-9_.-]/g, "_");
+    }
+  });
   $("#save-tenant").addEventListener("click", async () => {
-    const payload = Object.fromEntries(new FormData($("#tenant-form")).entries());
+    const payload = Object.fromEntries(new FormData(tenantForm).entries());
     try {
       await api("/api/v1/tenants", { method: "POST", body: JSON.stringify(payload) });
       $("#tenant-message").textContent = "Tenant criado.";
@@ -575,7 +885,8 @@ async function renderHosts() {
 async function renderHostSettings(hostId) {
   const cfg = await api(`/api/v1/hosts/${hostId}/settings`);
   const detectedLogs = cfg.detected_log_paths || [];
-  render(`<article class="card"><div class="actions"><button id="back-hosts" class="button ghost" type="button">Voltar para hosts</button></div><h3>Configuracao do host</h3><form id="host-settings-form" class="form-grid"><input type="hidden" name="host_id" value="${esc(cfg.id)}"><label>Host<input value="${esc(cfg.hostname)} (${esc(cfg.ip || "-")})" disabled></label><label>Modo<select name="monitoring_mode"><option value="infra">infra</option><option value="infra+otel">infra+otel</option><option value="disabled">disabled</option></select></label><label><input type="checkbox" name="otel_enabled" style="width:auto; margin-right:8px">OTel habilitado</label><label><input type="checkbox" name="log_collection" style="width:auto; margin-right:8px">Coleta de logs</label><label><input type="checkbox" name="ids_enabled" style="width:auto; margin-right:8px">IDS habilitado</label><label><input type="checkbox" name="vuln_scan_enabled" style="width:auto; margin-right:8px">Scan de vulnerabilidades</label><label><input type="checkbox" name="apm_enabled" style="width:auto; margin-right:8px">APM habilitado</label><label style="grid-column:1/-1">Tags<textarea name="tags" placeholder="producao, banco, api"></textarea></label><label style="grid-column:1/-1">Caminhos de log habilitados<textarea name="log_paths" placeholder="/var/log/syslog&#10;/opt/app/logs/app.log"></textarea></label></form><div class="card soft-card" style="margin-top:14px"><div class="section-header"><div><h3>Logs detectados pelo agente</h3><p class="muted">Detectados automaticamente; selecione para habilitar o consumo/processamento.</p></div><button id="add-detected-logs" class="button ghost" type="button">Adicionar selecionados</button></div>${detectedLogs.length ? detectedLogs.map((path, index) => `<label class="check-row"><input type="checkbox" class="detected-log" value="${esc(path)}" ${cfg.log_paths?.includes(path) ? "checked" : ""}>${esc(path)}</label>`).join("") : `<p class="muted">Nenhum log padrao detectado ainda. O agente atualizado informa estes caminhos no proximo heartbeat.</p>`}</div><div class="actions" style="margin-top:14px"><button id="save-host-settings" class="button primary" type="button">Salvar configuracao</button></div><p id="host-settings-message" class="message"></p></article>`);
+  const detectedTech = cfg.technology_inventory || [];
+  render(`<article class="card"><div class="actions"><button id="back-hosts" class="button ghost" type="button">Voltar para hosts</button></div><h3>Configuracao do host</h3><form id="host-settings-form" class="form-grid"><input type="hidden" name="host_id" value="${esc(cfg.id)}"><label>Host<input value="${esc(cfg.hostname)} (${esc(cfg.ip || "-")})" disabled></label><label>Modo<select name="monitoring_mode"><option value="infra">infra</option><option value="infra+otel">infra+otel</option><option value="disabled">disabled</option></select></label><label><input type="checkbox" name="otel_enabled" style="width:auto; margin-right:8px">OTel habilitado</label><label><input type="checkbox" name="log_collection" style="width:auto; margin-right:8px">Coleta de logs</label><label><input type="checkbox" name="ids_enabled" style="width:auto; margin-right:8px">IDS habilitado</label><label><input type="checkbox" name="vuln_scan_enabled" style="width:auto; margin-right:8px">Scan de vulnerabilidades</label><label><input type="checkbox" name="apm_enabled" style="width:auto; margin-right:8px">APM habilitado</label><label style="grid-column:1/-1">Tags<textarea name="tags" placeholder="producao, banco, api"></textarea></label><label style="grid-column:1/-1">Caminhos de log habilitados<textarea name="log_paths" placeholder="/var/log/syslog&#10;/opt/app/logs/app.log"></textarea></label></form><div class="card soft-card" style="margin-top:14px"><div class="section-header"><div><h3>Logs detectados pelo agente</h3><p class="muted">Detectados automaticamente; selecione para habilitar o consumo/processamento.</p></div><button id="add-detected-logs" class="button ghost" type="button">Adicionar selecionados</button></div>${detectedLogs.length ? detectedLogs.map((path, index) => `<label class="check-row"><input type="checkbox" class="detected-log" value="${esc(path)}" ${cfg.log_paths?.includes(path) ? "checked" : ""}>${esc(path)}</label>`).join("") : `<p class="muted">Nenhum log padrao detectado ainda. O agente atualizado informa estes caminhos no proximo heartbeat.</p>`}</div><div class="card soft-card" style="margin-top:14px"><div class="section-header"><div><h3>Tecnologias detectadas</h3><p class="muted">Processos e servidores candidatos a OpenTelemetry/RUM. Use os instaladores OTel para selecionar e preparar a instrumentacao.</p></div><div class="actions"><a class="button ghost" href="/api/v1/agents/download/otel/linux?appname=${encodeURIComponent(cfg.hostname || "host")}" target="_blank" rel="noreferrer">OTel Linux</a><a class="button ghost" href="/api/v1/agents/download/otel/windows?appname=${encodeURIComponent(cfg.hostname || "host")}" target="_blank" rel="noreferrer">OTel Windows</a></div></div>${detectedTech.length ? table(["PID", "Processo", "Tecnologia", "OTel", "Auto"], detectedTech.slice(0, 20).map((item) => [esc(item.pid || "-"), esc(item.name || "-"), esc(item.technology || "-"), item.otel_supported ? "suportado" : "manual", item.auto_apply_supported ? "preparavel" : "instrucoes"])) : `<p class="muted">Nenhuma tecnologia detectada ainda. O agente 4.1.4 enviara este inventario no proximo heartbeat.</p>`}</div><div class="actions" style="margin-top:14px"><button id="save-host-settings" class="button primary" type="button">Salvar configuracao</button></div><p id="host-settings-message" class="message"></p></article>`);
   const form = $("#host-settings-form");
   form.monitoring_mode.value = cfg.monitoring_mode || "infra+otel";
   form.otel_enabled.checked = !!cfg.otel_enabled;
@@ -634,7 +945,7 @@ async function renderHostDetail(hostId, options = {}) {
   const rateMetrics = deriveRates(data.metrics || []);
   const latest = latestPoint(rateMetrics);
   const topProcess = processes[0];
-  render(`<section class="entity-detail"><article class="detail-hero card"><div class="detail-hero-main"><p class="eyebrow">Host detalhado</p><h2>${esc(host.hostname)}</h2><p class="muted">${esc(host.os || "sistema nao identificado")} ${host.os_version ? `- ${esc(host.os_version)}` : ""}</p><div class="actions"><button id="back-hosts" class="button ghost" type="button">Voltar para hosts</button>${actionMenu([{ label: "Configuracoes", className: "host-detail-settings" }, { label: "Ir para processos/servicos", className: "host-detail-processes" }, { label: "Ir para logs", className: "host-detail-logs" }, { label: "Informacoes IDS", disabled: !host.ids_enabled }, { label: "Vulnerabilidades", disabled: !host.vuln_scan_enabled }])}</div></div><div class="detail-health">${healthPill(host.status)}<small>Ultima coleta<br><strong>${fmt(host.last_seen)}</strong></small></div></article><article class="card detail-kpis">${metricTile("IP", esc(host.ip || "-"))}${metricTile("Agente", esc(host.agent_version || "nao instalado"), esc(host.monitoring_mode || "-"))}${metricTile("CPU cores", num(host.cpu_cores))}${metricTile("RAM total", `${num(host.memory_total_mb)} MB`)}${metricTile("Disco total", `${num(host.disk_total_gb)} GB`)}${metricTile("Amostras no periodo", num((data.metrics || []).length), `${fmt(data.timeframe?.start)} ate ${fmt(data.timeframe?.end)}`)}</article><article class="card"><div class="section-header"><div><h3>Incidentes do host</h3><p class="muted">Ultimos 2 incidentes abertos ou fechados, com duracao operacional.</p></div></div>${incidents.length ? table(["ID", "Descricao", "Status", "Metrica", "Duracao"], incidents.map((incident) => [`<span class="mono">${esc(incident.id.slice(0, 8))}</span>`, `<strong>${esc(incident.name)}</strong><br><small>${esc(incident.description || "-")}</small>`, status(incident.status), esc(incident.metric || "-"), incidentDuration(incident)])) : `<p class="muted">Nenhum incidente real registrado para este host.</p>`}</article><article class="card"><div class="section-header"><div><h3>Modulos habilitados</h3><p class="muted">Estado operacional configurado para este host. IDS e scan de vulnerabilidade entram aqui no detalhe do host.</p></div></div><div class="feature-grid">${featureTile("Logs", host.log_collection, (host.log_paths || []).length ? `${(host.log_paths || []).length} paths` : "sem paths")}${featureTile("OpenTelemetry", host.otel_enabled)}${featureTile("IDS", host.ids_enabled)}${featureTile("Scan Vulnerabilidade", host.vuln_scan_enabled)}${featureTile("APM", host.apm_enabled)}</div></article><article class="card"><div class="section-header"><div><h3>Consumo de recursos</h3><p class="muted">Dados reais do agente no periodo selecionado. Rede mostra taxa aproximada por segundo derivada dos contadores do host.</p></div></div>${timeframeControl("host-detail", timeframe)}<div class="resource-snapshot">${percentBar("CPU agora", latest.cpuUsage)}${percentBar("Memoria agora", latest.memoryUsage)}${percentBar("Disco agora", latest.diskUsage)}</div><div class="charts-grid three">${seriesChart("CPU", data.metrics, [{ key: "cpuUsage", label: "CPU" }], { max: 100 })}${seriesChart("Memoria", data.metrics, [{ key: "memoryUsage", label: "Memoria" }], { max: 100 })}${seriesChart("Disco", data.metrics, [{ key: "diskUsage", label: "Disco" }], { max: 100 })}</div><div class="charts-grid">${seriesChart("Rede In / Download", rateMetrics, [{ key: "netInRate", label: "In / Download" }])}${seriesChart("Rede Out / Upload", rateMetrics, [{ key: "netOutRate", label: "Out / Upload" }])}</div></article><section class="grid two"><article class="card"><div class="section-header"><div><h3>Processos e consumo</h3><p class="muted">Snapshot real da ultima coleta: ${fmt(data.processes_collected_at)}</p></div>${topProcess ? `<span class="tag">Top: ${esc(topProcess.name)}</span>` : ""}</div>${processes.length ? table(["PID", "Processo", "Usuario", "Status", "CPU", "RAM"], processes.map((proc) => [esc(proc.pid || "-"), esc(proc.name), esc(proc.username || "-"), esc(proc.status || "-"), `${num(proc.cpuUsage)}%`, `${num(proc.memoryUsage)}%`])) : `<p class="muted">Ainda nao ha snapshot real de processos para este host. O proximo ciclo do agente atualizado deve preencher esta area.</p>`}</article><article class="card"><div class="section-header"><div><h3>Ultimos 5 logs</h3><p class="muted">Independente do timeframe do grafico. Mostramos os ultimos logs reais correlacionados por host, hostname ou IP.</p></div></div>${logs.length ? table(["Quando", "Nivel", "Origem", "Mensagem"], logs.map((log) => [fmt(log.timestamp), esc(log.level), esc(log.source || log.service || "-"), esc(log.message)])) : `<p class="muted">Nenhum log real encontrado para este host.</p>`}</article></section></section>`);
+  render(`<section class="entity-detail"><article class="detail-hero card"><div class="detail-hero-main"><p class="eyebrow">Host detalhado</p><h2>${esc(host.hostname)}</h2><p class="muted">${esc(host.os || "sistema nao identificado")} ${host.os_version ? `- ${esc(host.os_version)}` : ""}</p><div class="actions"><button id="back-hosts" class="button ghost" type="button">Voltar para hosts</button>${actionMenu([{ label: "Configuracoes", className: "host-detail-settings" }, { label: "Ir para processos/servicos", className: "host-detail-processes" }, { label: "Ir para logs", className: "host-detail-logs" }, { label: "Informacoes IDS", disabled: !host.ids_enabled }, { label: "Vulnerabilidades", disabled: !host.vuln_scan_enabled }])}</div></div><div class="detail-health">${healthPill(host.status)}<small>Ultima coleta<br><strong>${fmt(host.last_seen)}</strong></small></div></article><article class="card detail-kpis">${metricTile("IP", esc(host.ip || "-"))}${metricTile("Agente", esc(host.agent_version || "nao instalado"), esc(host.monitoring_mode || "-"))}${metricTile("CPU cores", maybeNum(host.cpu_cores))}${metricTile("RAM total", maybeUnit(host.memory_total_mb, "MB"))}${metricTile("Disco total", maybeUnit(host.disk_total_gb, "GB"))}${metricTile("Amostras no periodo", num((data.metrics || []).length), `${fmt(data.timeframe?.start)} ate ${fmt(data.timeframe?.end)}`)}</article><article class="card"><div class="section-header"><div><h3>Incidentes do host</h3><p class="muted">Ultimos 2 incidentes abertos ou fechados, com duracao operacional.</p></div></div>${incidents.length ? table(["ID", "Descricao", "Status", "Metrica", "Duracao"], incidents.map((incident) => [`<span class="mono">${esc(incident.id.slice(0, 8))}</span>`, `<strong>${esc(incident.name)}</strong><br><small>${esc(incident.description || "-")}</small>`, status(incident.status), esc(incident.metric || "-"), incidentDuration(incident)])) : `<p class="muted">Nenhum incidente real registrado para este host.</p>`}</article><article class="card"><div class="section-header"><div><h3>Modulos habilitados</h3><p class="muted">Estado operacional configurado para este host. IDS e scan de vulnerabilidade entram aqui no detalhe do host.</p></div></div><div class="feature-grid">${featureTile("Logs", host.log_collection, (host.log_paths || []).length ? `${(host.log_paths || []).length} paths` : "sem paths")}${featureTile("OpenTelemetry", host.otel_enabled)}${featureTile("IDS", host.ids_enabled)}${featureTile("Scan Vulnerabilidade", host.vuln_scan_enabled)}${featureTile("APM", host.apm_enabled)}</div></article><article class="card"><div class="section-header"><div><h3>Consumo de recursos</h3><p class="muted">Dados reais do agente no periodo selecionado. Rede mostra taxa aproximada por segundo derivada dos contadores do host.</p></div></div>${timeframeControl("host-detail", timeframe)}<div class="resource-snapshot">${percentBar("CPU agora", latest.cpuUsage)}${percentBar("Memoria agora", latest.memoryUsage)}${percentBar("Disco agora", latest.diskUsage)}</div><div class="charts-grid three">${seriesChart("CPU", data.metrics, [{ key: "cpuUsage", label: "CPU" }], { max: 100 })}${seriesChart("Memoria", data.metrics, [{ key: "memoryUsage", label: "Memoria" }], { max: 100 })}${seriesChart("Disco", data.metrics, [{ key: "diskUsage", label: "Disco" }], { max: 100 })}</div><div class="charts-grid">${seriesChart("Rede In / Download", rateMetrics, [{ key: "netInRate", label: "In / Download" }])}${seriesChart("Rede Out / Upload", rateMetrics, [{ key: "netOutRate", label: "Out / Upload" }])}</div></article><section class="grid two"><article class="card"><div class="section-header"><div><h3>Processos e consumo</h3><p class="muted">Snapshot real da ultima coleta: ${fmt(data.processes_collected_at)}</p></div>${topProcess ? `<span class="tag">Top: ${esc(topProcess.name)}</span>` : ""}</div>${processes.length ? table(["PID", "Processo", "Usuario", "Status", "CPU", "RAM"], processes.map((proc) => [esc(proc.pid || "-"), esc(proc.name), esc(proc.username || "-"), esc(proc.status || "-"), `${num(proc.cpuUsage)}%`, `${num(proc.memoryUsage)}%`])) : `<p class="muted">Ainda nao ha snapshot real de processos para este host. O proximo ciclo do agente atualizado deve preencher esta area.</p>`}</article><article class="card"><div class="section-header"><div><h3>Ultimos 5 logs</h3><p class="muted">Independente do timeframe do grafico. Mostramos os ultimos logs reais correlacionados por host, hostname ou IP.</p></div></div>${logs.length ? table(["Quando", "Nivel", "Origem", "Mensagem"], logs.map((log) => [fmt(log.timestamp), esc(log.level), esc(log.source || log.service || "-"), esc(log.message)])) : `<p class="muted">Nenhum log real encontrado para este host.</p>`}</article></section></section>`);
   const timeframeSelect = $("#host-detail-timeframe");
   const customRanges = $$(".custom-range");
   const updateCustomVisibility = () => customRanges.forEach((item) => item.classList.toggle("hidden", timeframeSelect.value !== "custom"));
@@ -687,9 +998,9 @@ function hostPropertiesInspector(host) {
     <article class="card">
       <h3>Hardware</h3>
       <div class="detail-grid">
-        <span>CPU cores<br><strong>${num(host.cpu_cores)}</strong></span>
-        <span>RAM total<br><strong>${num(host.memory_total_mb)} MB</strong></span>
-        <span>Disco total<br><strong>${num(host.disk_total_gb)} GB</strong></span>
+        <span>CPU cores<br><strong>${maybeNum(host.cpu_cores)}</strong></span>
+        <span>RAM total<br><strong>${maybeUnit(host.memory_total_mb, "MB")}</strong></span>
+        <span>Disco total<br><strong>${maybeUnit(host.disk_total_gb, "GB")}</strong></span>
         <span>Uptime<br><strong>${esc(host.uptime || "-")}</strong></span>
       </div>
     </article>
@@ -1074,9 +1385,185 @@ async function renderSimpleTable(view, endpoint, title, headers, mapper, message
   render(items.length ? `<article class="card"><h3>${title}</h3>${table(headers, items.map(mapper))}</article>` : empty(title, message));
 }
 
+async function renderTasks() {
+  const tasks = await api("/api/v1/tasks");
+  render(`<section class="grid"><article class="card"><div class="section-header"><div><h3>Tarefas, scans e coletas</h3><p class="muted">Clique no status para abrir logs, resultado e mensagem de falha da execucao.</p></div><button id="refresh-tasks" class="button ghost" type="button">Atualizar</button></div>${tasks.length ? table(["Nome", "Tipo", "Status", "Alvo", "Progresso", "Quando"], tasks.map((task) => [
+    `<strong>${esc(task.name)}</strong><br><small class="mono">${esc(task.id || "")}</small>`,
+    esc(task.type),
+    `<button class="link-button task-detail-trigger" data-task-id="${esc(task.id)}" type="button">${status(task.status)}</button>`,
+    esc(task.target || "-"),
+    `${num(task.progress)}%`,
+    fmt(task.scheduled_at || task.started_at || task.completed_at),
+  ])) : `<p class="muted">Nenhuma tarefa executada ainda.</p>`}</article></section>`);
+  $("#refresh-tasks").addEventListener("click", renderTasks);
+  $$(".task-detail-trigger").forEach((button) => button.addEventListener("click", () => renderTaskDetail(button.dataset.taskId)));
+}
+
+async function renderTaskDetail(taskId) {
+  const task = await api(`/api/v1/tasks/${taskId}`);
+  const logRows = (task.logs || []).map((log) => [
+    fmt(log.ts || log.timestamp || log.created_at),
+    esc(log.level || log.status || "-"),
+    esc(log.gateway_name || log.source || "-"),
+    esc(log.message || log.msg || JSON.stringify(log)),
+  ]);
+  render(`<section class="grid"><article class="card"><div class="actions"><button id="back-tasks" class="button ghost" type="button">Voltar</button>${["pending", "running"].includes(String(task.status)) ? `<button id="cancel-task" class="button ghost" type="button">Cancelar</button>` : ""}</div><h3>${esc(task.name || task.id)}</h3><div class="detail-kpis">${metricTile("Status", status(task.status))}${metricTile("Tipo", esc(task.type || "-"))}${metricTile("Alvo", esc(task.target || "-"))}${metricTile("Progresso", `${num(task.progress)}%`)}</div>${task.error ? `<article class="soft-card card"><h3>Erro da execucao</h3><p class="message">${esc(task.error)}</p></article>` : ""}</article><article class="card"><h3>Logs da tarefa</h3>${logRows.length ? table(["Quando", "Nivel", "Origem", "Mensagem"], logRows) : `<p class="muted">Sem logs registrados para esta tarefa.</p>`}</article><article class="card"><h3>Resultado bruto</h3>${jsonBlock(task.result || {})}</article></section>`);
+  $("#back-tasks").addEventListener("click", renderTasks);
+  $("#cancel-task")?.addEventListener("click", async () => {
+    await api(`/api/v1/tasks/${taskId}/cancel`, { method: "POST" });
+    await renderTaskDetail(taskId);
+  });
+}
+
+function alertRuleForm(rule = {}) {
+  const selectedMetric = rule.metric || "cpu_usage";
+  return `<form id="alert-rule-form" class="form-grid">
+    <input name="id" type="hidden" value="${esc(rule.id || "")}">
+    <label>Nome<input name="name" value="${esc(rule.name || "")}" required></label>
+    <label>Entidade<select name="entity_type">${alertEntityTypes.map(([key, label]) => `<option value="${key}" ${key === (rule.entity_type || "host") ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+    <label>Metrica<select name="metric">${alertMetrics.map(([key, label]) => `<option value="${key}" ${key === selectedMetric ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+    <label>Operador<select name="condition_op">${[">", ">=", "<", "<=", "==", "!="].map((op) => `<option value="${op}" ${op === (rule.condition_op || ">") ? "selected" : ""}>${op}</option>`).join("")}</select></label>
+    <label>Threshold<input name="threshold_value" type="number" step="0.01" value="${esc(rule.threshold_value ?? 80)}" required></label>
+    <label>Duração (seg)<input name="duration_seconds" type="number" value="${esc(rule.duration_seconds ?? 60)}"></label>
+    <label>Severidade<select name="severity">${["low", "medium", "high", "critical"].map((sev) => `<option value="${sev}" ${sev === (rule.severity || "medium") ? "selected" : ""}>${sev}</option>`).join("")}</select></label>
+    <label>Supressao (seg)<input name="suppress_seconds" type="number" value="${esc(rule.suppress_seconds ?? 300)}"></label>
+    <label>Entidades IDs<input name="entity_ids" value="${esc((rule.entity_ids || []).join(","))}" placeholder="opcional, separado por virgula"></label>
+    <label>Tags<input name="tags_filter" value="${esc((rule.tags_filter || []).join(","))}" placeholder="opcional, separado por virgula"></label>
+    <label style="grid-column:1/-1">Descricao<textarea name="description">${esc(rule.description || "")}</textarea></label>
+    <label class="check-row"><input name="enabled" type="checkbox" ${rule.enabled === false ? "" : "checked"}> Regra habilitada</label>
+    <label class="check-row"><input name="use_baseline" type="checkbox" ${rule.use_baseline ? "checked" : ""}> Usar baseline automatico</label>
+  </form>`;
+}
+
+function alertRulePayload(form) {
+  const data = Object.fromEntries(new FormData(form).entries());
+  return {
+    name: data.name,
+    description: data.description || null,
+    entity_type: data.entity_type || "host",
+    metric: data.metric || "cpu_usage",
+    condition_op: data.condition_op || ">",
+    threshold_value: Number(data.threshold_value || 0),
+    duration_seconds: Number(data.duration_seconds || 60),
+    severity: data.severity || "medium",
+    enabled: form.elements.enabled.checked,
+    use_baseline: form.elements.use_baseline.checked,
+    suppress_seconds: Number(data.suppress_seconds || 300),
+    entity_ids: String(data.entity_ids || "").split(",").map((item) => item.trim()).filter(Boolean),
+    tags_filter: String(data.tags_filter || "").split(",").map((item) => item.trim()).filter(Boolean),
+    channels: [],
+  };
+}
+
+async function renderAlerts(editRule = null) {
+  const [rules, alerts] = await Promise.all([
+    api("/api/v1/alerts/rules"),
+    api("/api/v1/alerts").catch(() => []),
+  ]);
+  const editing = editRule || {};
+  render(`<section class="grid"><article class="card"><div class="section-header"><div><h3>Nova regra de alerta</h3><p class="muted">Crie regras por metricas padrao, status, logs, processos, servicos, aplicacoes, synthetics e portas de rede.</p></div></div>${alertRuleForm(editing)}<div class="actions" style="margin-top:14px"><button id="save-alert-rule" class="button primary" type="button">${editing.id ? "Salvar regra" : "Criar regra"}</button><button id="reset-alert-rule" class="button ghost" type="button">Limpar</button></div><p id="alert-rule-message" class="message"></p></article><article class="card"><h3>Regras cadastradas</h3>${rules.length ? table(["Nome", "Entidade", "Metrica", "Condicao", "Baseline", "Status", "Acoes"], rules.map((rule) => [
+    esc(rule.name),
+    esc(rule.entity_type),
+    esc(rule.metric),
+    `${esc(rule.condition_op)} ${num(rule.threshold_value)}`,
+    rule.use_baseline ? "sim" : "nao",
+    rule.enabled ? "habilitada" : "desabilitada",
+    actionMenu([{ label: "Editar", className: "edit-alert-rule", attrs: `data-rule-id="${esc(rule.id)}"` }, { label: "Excluir", className: "delete-alert-rule", attrs: `data-rule-id="${esc(rule.id)}"` }]),
+  ])) : `<p class="muted">Nenhuma regra criada ainda.</p>`}</article><article class="card"><h3>Alertas recentes</h3>${alerts.length ? table(["Quando", "Nome", "Severidade", "Entidade", "Metrica", "Valor"], alerts.slice(0, 20).map((alert) => [fmt(alert.triggered_at), esc(alert.name), esc(alert.severity), esc(alert.entity_name || alert.entity_type || "-"), esc(alert.metric || "-"), maybeNum(alert.observed_value)])) : `<p class="muted">Nenhum alerta gerado ainda.</p>`}</article></section>`);
+  $("#save-alert-rule").addEventListener("click", async () => {
+    const form = $("#alert-rule-form");
+    const id = form.elements.id.value;
+    try {
+      await api(id ? `/api/v1/alerts/rules/${id}` : "/api/v1/alerts/rules", { method: id ? "PUT" : "POST", body: JSON.stringify(alertRulePayload(form)) });
+      await renderAlerts();
+    } catch (error) {
+      $("#alert-rule-message").textContent = error.message;
+    }
+  });
+  $("#reset-alert-rule").addEventListener("click", () => renderAlerts());
+  $$(".edit-alert-rule").forEach((button) => button.addEventListener("click", () => renderAlerts(rules.find((rule) => rule.id === button.dataset.ruleId))));
+  $$(".delete-alert-rule").forEach((button) => button.addEventListener("click", async () => {
+    if (!confirm("Excluir esta regra de alerta?")) return;
+    await api(`/api/v1/alerts/rules/${button.dataset.ruleId}`, { method: "DELETE" });
+    await renderAlerts();
+  }));
+}
+
+function userForm(user = {}) {
+  const permissions = new Set(user.permissions || []);
+  const group = user.permission_group || "viewer";
+  return `<form id="user-form" class="form-grid">
+    <input name="id" type="hidden" value="${esc(user.id || "")}">
+    <label>Nome completo<input name="full_name" value="${esc(user.full_name || "")}" required></label>
+    <label>E-mail<input name="email" type="email" value="${esc(user.email || "")}" required></label>
+    <label>Usuario<input name="username" value="${esc(user.username || "")}" placeholder="opcional"></label>
+    <label>Senha${user.id ? " (opcional)" : ""}<input name="password" type="password" autocomplete="new-password" ${user.id ? "" : "required"}></label>
+    <label>Grupo<select name="permission_group">${Object.entries(permissionGroups).map(([key, item]) => `<option value="${key}" ${key === group ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label>
+    <label>Papel<select name="role">${["viewer", "operator", "admin"].map((role) => `<option value="${role}" ${role === (user.role || permissionGroups[group]?.role || "viewer") ? "selected" : ""}>${role}</option>`).join("")}</select></label>
+    <label class="check-row"><input name="active" type="checkbox" ${user.active === false ? "" : "checked"}> Usuario ativo</label>
+    <div style="grid-column:1/-1"><p class="muted">Funcionalidades permitidas</p><div class="pill-row">${TENANT_VIEWS.map((view) => `<label class="pill-check"><input type="checkbox" name="permissions" value="${esc(view)}" ${permissions.has(view) ? "checked" : ""}>${esc(titleMap[view] || view)}</label>`).join("")}</div></div>
+  </form>`;
+}
+
+function userPayload(form) {
+  const data = Object.fromEntries(new FormData(form).entries());
+  const permissions = [...form.querySelectorAll('input[name="permissions"]:checked')].map((input) => input.value);
+  const payload = {
+    full_name: data.full_name,
+    email: data.email,
+    username: data.username || data.email,
+    role: data.role || "viewer",
+    permission_group: data.permission_group || "viewer",
+    permissions,
+    active: form.elements.active.checked,
+  };
+  if (data.password) payload.password = data.password;
+  return payload;
+}
+
+async function renderUsers(editUser = null) {
+  const payload = await api("/api/v1/users");
+  const users = Array.isArray(payload) ? payload : (payload.users || payload.items || payload.results || []);
+  const editing = editUser || {};
+  render(`<section class="grid"><article class="card"><div class="section-header"><div><h3>${editing.id ? "Editar usuario" : "Novo usuario"}</h3><p class="muted">Crie usuarios por grupo e selecione quais funcionalidades do menu ficam permitidas.</p></div></div>${userForm(editing)}<div class="actions" style="margin-top:14px"><button id="save-user" class="button primary" type="button">${editing.id ? "Salvar usuario" : "Criar usuario"}</button><button id="reset-user" class="button ghost" type="button">Limpar</button></div><p id="user-message" class="message"></p></article><article class="card"><h3>Usuarios</h3>${users.length ? table(["Usuario", "Nome", "Email", "Grupo", "Papel", "Status", "Acoes"], users.map((item) => [
+    esc(item.username),
+    esc(item.full_name || "-"),
+    esc(item.email),
+    esc(permissionGroups[item.permission_group]?.label || item.permission_group || "-"),
+    esc(item.role),
+    item.active ? "ativo" : "inativo",
+    actionMenu([{ label: "Editar", className: "edit-user", attrs: `data-user-id="${esc(item.id)}"` }, { label: "Excluir", className: "delete-user", attrs: `data-user-id="${esc(item.id)}"`, disabled: item.id === state.currentUser?.id }]),
+  ])) : `<p class="muted">Nenhum usuario cadastrado.</p>`}</article></section>`);
+  $("#save-user").addEventListener("click", async () => {
+    const form = $("#user-form");
+    const id = form.elements.id.value;
+    try {
+      await api(id ? `/api/v1/users/${id}` : "/api/v1/users", { method: id ? "PUT" : "POST", body: JSON.stringify(userPayload(form)) });
+      await renderUsers();
+    } catch (error) {
+      $("#user-message").textContent = error.message;
+    }
+  });
+  $("#reset-user").addEventListener("click", () => renderUsers());
+  $$(".edit-user").forEach((button) => button.addEventListener("click", () => renderUsers(users.find((item) => item.id === button.dataset.userId))));
+  $$(".delete-user").forEach((button) => button.addEventListener("click", async () => {
+    if (!confirm("Excluir este usuario?")) return;
+    await api(`/api/v1/users/${button.dataset.userId}`, { method: "DELETE" });
+    await renderUsers();
+  }));
+}
+
 async function renderNetworkAssets() {
-  const items = await api(`/api/v1/network-assets${queryString(state.filters.network || {})}`);
-  render(`<section class="grid"><article class="card"><div class="section-header"><div><h3>Discovery e ativos de rede</h3><p class="muted">Varredura real por CIDR. Somente switches, roteadores, firewalls, APs e dispositivos equivalentes aparecem aqui; servidores e estacoes ficam em Hosts.</p></div></div><form id="network-discovery-form" class="form-grid"><label>CIDR<input name="cidr" placeholder="192.168.0.0/24" required></label><label>Portas<input name="ports" value="22,80,443,161,3389,514,8080,8443"></label><label>SNMP community<input name="snmp_community" value="public"></label><label>Timeout ms<input name="timeout_ms" type="number" value="350"></label></form><div class="actions" style="margin-top:14px"><button id="start-network-discovery" class="button primary" type="button">Iniciar discovery</button><button id="refresh-network-assets" class="button ghost" type="button">Atualizar lista</button></div><p id="network-message" class="message"></p></article><article class="card"><h3>Teste SNMP GET</h3><p class="muted">Execute um GET real via gateway do tenant. Use para validar community, ACL e resposta UDP/161 antes do discovery.</p><form id="snmp-get-form" class="form-grid"><label>IP<input name="ip" placeholder="192.168.0.50" required></label><label>Community<input name="snmp_community" value="public"></label><label>OID<input name="oid" value="1.3.6.1.2.1.1.1.0"></label><label>Porta<input name="snmp_port" type="number" value="161"></label></form><div class="actions" style="margin-top:14px"><button id="run-snmp-get" class="button primary" type="button">Executar SNMP GET</button></div><p id="snmp-get-message" class="message"></p></article><article class="card"><h3>Ativos</h3>${filterPanel("network", [{ name: "q", label: "Host/IP/Fabricante" }, { name: "group", label: "Grupo" }, { name: "asset_type", label: "Tipo" }, { name: "manufacturer", label: "Fabricante" }], false)}${items.length ? table(["Host", "Grupo", "Tipo", "SNMP", "SYSLOG", "Fabricante", "Portas", "Acoes"], items.map((asset) => [
+  const [items, gatewayPayload] = await Promise.all([
+    api(`/api/v1/network-assets${queryString(state.filters.network || {})}`),
+    api("/api/v1/gateways").catch(() => []),
+  ]);
+  const gateways = Array.isArray(gatewayPayload) ? gatewayPayload : (gatewayPayload.items || gatewayPayload.gateways || []);
+  const gatewayOptions = [
+    `<option value="">Automatico pelo tenant</option>`,
+    ...gateways.map((gateway) => `<option value="${esc(gateway.id)}">${esc(gateway.name || gateway.hostname || gateway.id)} - ${esc(gateway.type || "gateway")} - ${esc(gateway.status || "unknown")}</option>`),
+  ].join("");
+  render(`<section class="grid"><article class="card"><div class="section-header"><div><h3>Discovery e ativos de rede</h3><p class="muted">Varredura real por CIDR. Pode executar via qualquer gateway online do tenant, inclusive Windows, desde que ele tenha conectividade com a rede alvo.</p></div></div><form id="network-discovery-form" class="form-grid"><label>CIDR<input name="cidr" placeholder="192.168.0.0/24" required></label><label>Gateway executor<select name="gateway_id">${gatewayOptions}</select></label><label style="grid-column:1/-1">Portas<input name="ports" value="${defaultDiscoveryPorts.join(",")}"></label><label>SNMP community<input name="snmp_community" value="public"></label><label>Timeout ms<input name="timeout_ms" type="number" value="350"></label></form><div class="actions" style="margin-top:14px"><button id="start-network-discovery" class="button primary" type="button">Iniciar discovery</button><button id="refresh-network-assets" class="button ghost" type="button">Atualizar lista</button></div><p id="network-message" class="message"></p></article><article class="card"><h3>Teste SNMP GET</h3><p class="muted">Execute um GET real via gateway do tenant. Use para validar community, ACL e resposta UDP/161 antes do discovery.</p><form id="snmp-get-form" class="form-grid"><label>IP<input name="ip" placeholder="192.168.0.50" required></label><label>Gateway executor<select name="gateway_id">${gatewayOptions}</select></label><label>Community<input name="snmp_community" value="public"></label><label>OID<input name="oid" value="1.3.6.1.2.1.1.1.0"></label><label>Porta<input name="snmp_port" type="number" value="161"></label></form><div class="actions" style="margin-top:14px"><button id="run-snmp-get" class="button primary" type="button">Executar SNMP GET</button></div><p id="snmp-get-message" class="message"></p></article><article class="card"><div class="section-header"><div><h3>Ativos</h3><p class="muted">Os ativos permanecem visiveis; use os tres pontos/acoes para coletar SNMP ou abrir detalhes.</p></div></div>${filterPanel("network", [{ name: "q", label: "Host/IP/Fabricante" }, { name: "group", label: "Grupo" }, { name: "asset_type", label: "Tipo" }, { name: "manufacturer", label: "Fabricante" }], false)}${items.length ? table(["Host", "Grupo", "Tipo", "SNMP", "SYSLOG", "Fabricante", "Portas", "Acoes"], items.map((asset) => [
     `<button class="link-button network-detail-trigger" data-asset-id="${esc(asset.id)}" type="button"><strong>${esc(asset.hostname || "-")}</strong></button><br><small>${esc(asset.ip)}</small>`,
     esc(asset.group || "-"),
     esc(asset.asset_type || "-"),
@@ -1093,6 +1580,7 @@ async function renderNetworkAssets() {
       const payload = {
         cidr: form.cidr,
         ports: form.ports.split(",").map((item) => Number(item.trim())).filter(Boolean),
+        gateway_id: form.gateway_id || undefined,
         snmp_community: form.snmp_community || "public",
         timeout_ms: Number(form.timeout_ms || 350),
       };
@@ -1111,6 +1599,7 @@ async function renderNetworkAssets() {
         body: JSON.stringify({
           ip: form.ip,
           oid: form.oid || "1.3.6.1.2.1.1.1.0",
+          gateway_id: form.gateway_id || undefined,
           snmp_community: form.snmp_community || "public",
           snmp_port: Number(form.snmp_port || 161),
         }),
@@ -1143,7 +1632,24 @@ async function renderNetworkAssetDetail(assetId) {
   const asset = data.asset;
   const ports = data.ports || [];
   render(`<section class="entity-detail"><article class="detail-hero card"><div class="detail-hero-main"><p class="eyebrow">Ativo de rede</p><h2>${esc(asset.hostname || asset.ip)}</h2><p class="muted">${esc(asset.manufacturer || "-")} ${esc(asset.os_firmware || "")}</p><div class="actions"><button id="back-network" class="button ghost" type="button">Voltar para ativos</button></div></div><div class="detail-health">${healthPill(asset.status)}<small>Ultima coleta<br><strong>${fmt(asset.last_poll || asset.last_scan)}</strong></small></div></article><article class="card detail-kpis">${metricTile("IP", esc(asset.ip))}${metricTile("Tipo", esc(asset.asset_type || "-"))}${metricTile("SNMP", asset.snmp_enabled ? "ativo" : "nao")}${metricTile("SYSLOG", asset.syslog_enabled ? "habilitado" : "nao")}${metricTile("Portas", `${num(asset.ports_up)} up / ${num(asset.ports_down)} down`, `${num(asset.port_count)} total`)}</article><article class="card"><h3>Portas e interfaces SNMP</h3>${ports.length ? table(["#", "Nome", "Descricao", "Status", "Velocidade", "RX/TX", "Erros"], ports.map((port) => [num(port.port_number), esc(port.name || "-"), esc(port.description || "-"), status(port.status), `${num(port.speed_mbps)} Mbps`, `${bytes(port.rx_bytes)} / ${bytes(port.tx_bytes)}`, `${num(port.rx_errors)} / ${num(port.tx_errors)}`])) : `<p class="muted">Nenhuma porta coletada ainda. Execute Coletar SNMP no ativo após atualizar o gateway.</p>`}</article></section>`);
+  const portTable = ports.length
+    ? table(["#", "Nome", "Descricao", "Status", "Velocidade", "Utilizacao", "RX/TX", "Erros/Drops"], ports.map((port, index) => [
+      num(port.port_number),
+      `<button class="link-button network-port-detail" data-port-index="${index}" type="button">${esc(port.name || "-")}</button>`,
+      esc(port.description || "-"),
+      status(port.status),
+      `${num(port.speed_mbps)} Mbps`,
+      maybeNum(port.utilization, "%"),
+      `${bytes(port.rx_bytes)} / ${bytes(port.tx_bytes)}`,
+      `${num(port.rx_errors)} / ${num(port.tx_errors)} / ${num(port.rx_drops)} / ${num(port.tx_drops)}`,
+    ]))
+    : `<p class="muted">Nenhuma porta coletada ainda. Execute Coletar SNMP no ativo apos atualizar o gateway.</p>`;
+  render(`<section class="entity-detail"><article class="detail-hero card"><div class="detail-hero-main"><p class="eyebrow">Ativo de rede</p><h2>${esc(asset.hostname || asset.ip)}</h2><p class="muted">${esc(asset.manufacturer || "-")} ${esc(asset.os_firmware || "")}</p><div class="actions"><button id="back-network" class="button ghost" type="button">Voltar para ativos</button></div></div><div class="detail-health">${healthPill(asset.status)}<small>Ultima coleta<br><strong>${fmt(asset.last_poll || asset.last_scan)}</strong></small></div></article><article class="card detail-kpis">${metricTile("IP", esc(asset.ip))}${metricTile("Tipo", esc(asset.asset_type || "-"))}${metricTile("SNMP", asset.snmp_enabled ? "ativo" : "nao")}${metricTile("SYSLOG", asset.syslog_enabled ? "habilitado" : "nao")}${metricTile("Portas", `${num(asset.ports_up)} up / ${num(asset.ports_down)} down`, `${num(asset.port_count)} total`)}</article><article class="card"><h3>Portas e interfaces SNMP</h3>${portTable}</article></section>`);
   $("#back-network").addEventListener("click", () => renderNetworkAssets());
+  $$(".network-port-detail").forEach((button) => button.addEventListener("click", () => {
+    const port = ports[Number(button.dataset.portIndex || 0)] || {};
+    openInspector({ title: port.name || `Porta ${port.port_number || ""}`, eyebrow: "Detalhes da porta", body: networkPortInspector(port) });
+  }));
 }
 
 function assetPropertiesInspector(asset) {
@@ -1164,6 +1670,29 @@ function assetPropertiesInspector(asset) {
     down: asset.ports_down ?? "-",
   };
   return `${kvTable("Geral", general)}${kvTable("Portas", ports)}`;
+}
+
+function networkPortInspector(port) {
+  return `${kvTable("Identificacao", {
+    indice: port.port_number ?? "-",
+    nome: port.name || "-",
+    descricao: port.description || "-",
+    status: port.status || "-",
+    velocidade_mbps: port.speed_mbps ?? "-",
+    duplex: port.duplex || "-",
+    vlan: port.vlan || "-",
+    dispositivo_conectado: port.connected_device || "-",
+  })}${kvTable("Trafego e saude", {
+    utilizacao_percentual: port.utilization ?? "-",
+    rx_bytes: bytes(port.rx_bytes),
+    tx_bytes: bytes(port.tx_bytes),
+    rx_packets: port.rx_packets ?? "-",
+    tx_packets: port.tx_packets ?? "-",
+    rx_errors: port.rx_errors ?? "-",
+    tx_errors: port.tx_errors ?? "-",
+    rx_drops: port.rx_drops ?? "-",
+    tx_drops: port.tx_drops ?? "-",
+  })}`;
 }
 
 async function renderNetworkAssetDetailV2(assetId) {
@@ -1203,15 +1732,16 @@ async function renderNetworkAssetDetailV2(assetId) {
           </div>
         </div>
         ${ports.length ? table(
-          ["#", "Nome", "Descricao", "Status", "Velocidade", "RX/TX", "Erros"],
-          ports.map((port) => [
+          ["#", "Nome", "Descricao", "Status", "Velocidade", "Utilizacao", "RX/TX", "Erros/Drops"],
+          ports.map((port, index) => [
             num(port.port_number),
-            esc(port.name || "-"),
+            `<button class="link-button network-port-detail" data-port-index="${index}" type="button">${esc(port.name || "-")}</button>`,
             esc(port.description || "-"),
             status(port.status),
             `${num(port.speed_mbps)} Mbps`,
+            maybeNum(port.utilization, "%"),
             `${bytes(port.rx_bytes)} / ${bytes(port.tx_bytes)}`,
-            `${num(port.rx_errors)} / ${num(port.tx_errors)}`,
+            `${num(port.rx_errors)} / ${num(port.tx_errors)} / ${num(port.rx_drops)} / ${num(port.tx_drops)}`,
           ])
         ) : `<p class="muted">Nenhuma porta coletada ainda.</p>`}
       </article>
@@ -1225,6 +1755,10 @@ async function renderNetworkAssetDetailV2(assetId) {
   });
 
   $("#back-network").addEventListener("click", () => renderNetworkAssets());
+  $$(".network-port-detail").forEach((button) => button.addEventListener("click", () => {
+    const port = ports[Number(button.dataset.portIndex || 0)] || {};
+    openInspector({ title: port.name || `Porta ${port.port_number || ""}`, eyebrow: "Detalhes da porta", body: networkPortInspector(port) });
+  }));
   $$(".v2-open-props").forEach((button) => button.addEventListener("click", () => openInspector({
     title: asset.hostname || asset.ip || "Ativo",
     eyebrow: "Propriedades do ativo",
@@ -1414,7 +1948,7 @@ async function renderServiceDetailV2(serviceName) {
 
 async function renderApplicationsLegacy() {
   const items = await api(`/api/v1/applications${queryString(state.filters.applications || { timeframe: "24h" })}`);
-  render(`<section class="grid"><article class="card"><div class="section-header"><div><h3>Aplicacoes</h3><p class="muted">Candidatas descobertas por URLs reais em OTLP/RUM. RUM, traces, servicos, requests e erros ficam correlacionados conforme chegam dados reais.</p></div><div class="actions"><a class="button ghost" href="/api/v1/agents/download/rum-js?appname=web-app" target="_blank" rel="noreferrer">Baixar RUM app.js</a><a class="button ghost" href="/api/v1/agents/download/otel-installer?appname=web-app&language=java" target="_blank" rel="noreferrer">Instalador OTel</a></div></div>${filterPanel("applications", [{ name: "q", label: "URL/contexto" }, { name: "service", label: "Servico" }])}${items.length ? table(["Aplicacao", "Satisfacao", "Sessoes", "Usuarios live", "Requests", "Acoes", "Erros req.", "Erros JS", "Latencia media", "Servicos"], items.map((app) => [`<button class="link-button app-detail-placeholder" type="button"><strong>${esc(app.name)}</strong></button>`, `${num(app.satisfaction_index)}%`, num(app.sessions), num(app.users_online), num(app.requests), num(app.actions), num(app.request_errors), num(app.javascript_errors), `${num(app.avg_response_ms)} ms`, esc((app.services || []).join(", ") || "-")])) : `<p class="muted">Nenhuma aplicacao candidata identificada por traces/RUM ainda.</p>`}</article><article class="card"><h3>Como ativar RUM</h3><p class="muted">Inclua o script antes de fechar o body da aplicacao web. Ele coleta navigation timing, clicks, erros JS e fetch().</p><pre><code>&lt;script src="/api/v1/agents/download/rum-js?appname=minha-app"&gt;&lt;/script&gt;</code></pre><p class="muted">A injecao automatica por agente/gateway em Nginx/Apache/IIS sera o proximo passo quando o agente detectar webservers e paths configurados.</p></article></section>`);
+  render(`<section class="grid"><article class="card"><div class="section-header"><div><h3>Aplicacoes</h3><p class="muted">Candidatas descobertas por URLs reais em OTLP/RUM. RUM, traces, servicos, requests e erros ficam correlacionados conforme chegam dados reais.</p></div><div class="actions"><a class="button ghost" href="/api/v1/agents/download/rum-js?appname=web-app" target="_blank" rel="noreferrer">Baixar RUM app.js</a><a class="button ghost" href="/api/v1/agents/download/otel/linux?appname=web-app" target="_blank" rel="noreferrer">OTel Linux</a><a class="button ghost" href="/api/v1/agents/download/otel/windows?appname=web-app" target="_blank" rel="noreferrer">OTel Windows</a></div></div>${filterPanel("applications", [{ name: "q", label: "URL/contexto" }, { name: "service", label: "Servico" }])}${items.length ? table(["Aplicacao", "Satisfacao", "Sessoes", "Usuarios live", "Requests", "Acoes", "Erros req.", "Erros JS", "Latencia media", "Servicos"], items.map((app) => [`<button class="link-button app-detail-placeholder" type="button"><strong>${esc(app.name)}</strong></button>`, `${num(app.satisfaction_index)}%`, num(app.sessions), num(app.users_online), num(app.requests), num(app.actions), num(app.request_errors), num(app.javascript_errors), `${num(app.avg_response_ms)} ms`, esc((app.services || []).join(", ") || "-")])) : `<p class="muted">Nenhuma aplicacao candidata identificada por traces/RUM ainda.</p>`}</article><article class="card"><h3>Como ativar RUM</h3><p class="muted">Inclua o script antes de fechar o body da aplicacao web. Ele coleta navigation timing, clicks, erros JS e fetch().</p><pre><code>&lt;script src="/api/v1/agents/download/rum-js?appname=minha-app"&gt;&lt;/script&gt;</code></pre><p class="muted">A injecao automatica por agente/gateway em Nginx/Apache/IIS sera o proximo passo quando o agente detectar webservers e paths configurados.</p></article></section>`);
   bindFilters("applications", renderApplications);
   $$(".app-detail-placeholder").forEach((button) => button.addEventListener("click", () => {
     render(`<article class="card"><div class="actions"><button id="back-apps" class="button ghost" type="button">Voltar</button></div><h3>Detalhe da aplicacao</h3><p class="muted">O drill down de sessoes RUM por usuario entrara quando o coletor RUM estiver enviando sessoes, acoes, browser/OS e tempos client/server/network reais.</p></article>`);
@@ -1424,7 +1958,7 @@ async function renderApplicationsLegacy() {
 
 async function renderApplications() {
   const items = await api(`/api/v1/applications${queryString(state.filters.applications || { timeframe: "24h" })}`);
-  render(`<section class="grid"><article class="card"><div class="section-header"><div><h3>Aplicacoes</h3><p class="muted">Candidatas descobertas por URLs reais em OTLP/RUM. Voce tambem podera criar regras por URL, dominio, host, servico ou API.</p></div><div class="actions"><a class="button ghost" href="/api/v1/agents/download/rum-js?appname=web-app" target="_blank" rel="noreferrer">Baixar RUM app.js</a><a class="button ghost" href="/api/v1/agents/download/otel-installer?appname=web-app&language=java" target="_blank" rel="noreferrer">Instalador OTel</a></div></div>${filterPanel("applications", [{ name: "q", label: "URL/contexto" }, { name: "service", label: "Servico" }])}${items.length ? table(["Aplicacao", "Satisfacao", "Sessoes", "Usuarios live", "Requests", "Acoes", "Erros req.", "Erros JS", "Latencia media", "Servicos"], items.map((app) => [`<button class="link-button app-detail-trigger" data-app-name="${esc(app.name)}" type="button"><strong>${esc(app.name)}</strong></button>`, `${num(app.satisfaction_index)}%`, num(app.sessions), num(app.users_online), num(app.requests), num(app.actions), num(app.request_errors), num(app.javascript_errors), `${num(app.avg_response_ms)} ms`, esc((app.services || []).join(", ") || "-")])) : `<p class="muted">Nenhuma aplicacao candidata identificada por traces/RUM ainda.</p>`}</article><article class="card"><h3>Regras de aplicacao</h3><p class="muted">Proximo passo: persistir regras como URL comeca/termina/contem/igual, dominio, webserver hostname, servico ou API. Hoje a API ja sugere nomes como LAS Home, LAS Protobuf e LAS Smoke a partir das URLs reais.</p><pre><code>Ex.: /las/home = LAS Home\nEx.: /las/protobuf = LAS Protobuf</code></pre></article><article class="card"><h3>Como ativar RUM</h3><p class="muted">Inclua o script antes de fechar o body da aplicacao web. Ele coleta navigation timing, clicks, erros JS e fetch().</p><pre><code>&lt;script src="/api/v1/agents/download/rum-js?appname=minha-app"&gt;&lt;/script&gt;</code></pre></article></section>`);
+  render(`<section class="grid"><article class="card"><div class="section-header"><div><h3>Aplicacoes</h3><p class="muted">Candidatas descobertas por URLs reais em OTLP/RUM. Voce tambem podera criar regras por URL, dominio, host, servico ou API.</p></div><div class="actions"><a class="button ghost" href="/api/v1/agents/download/rum-js?appname=web-app" target="_blank" rel="noreferrer">Baixar RUM app.js</a><a class="button ghost" href="/api/v1/agents/download/otel/linux?appname=web-app" target="_blank" rel="noreferrer">OTel Linux</a><a class="button ghost" href="/api/v1/agents/download/otel/windows?appname=web-app" target="_blank" rel="noreferrer">OTel Windows</a></div></div>${filterPanel("applications", [{ name: "q", label: "URL/contexto" }, { name: "service", label: "Servico" }])}${items.length ? table(["Aplicacao", "Satisfacao", "Sessoes", "Usuarios live", "Requests", "Acoes", "Erros req.", "Erros JS", "Latencia media", "Servicos"], items.map((app) => [`<button class="link-button app-detail-trigger" data-app-name="${esc(app.name)}" type="button"><strong>${esc(app.name)}</strong></button>`, `${num(app.satisfaction_index)}%`, num(app.sessions), num(app.users_online), num(app.requests), num(app.actions), num(app.request_errors), num(app.javascript_errors), `${num(app.avg_response_ms)} ms`, esc((app.services || []).join(", ") || "-")])) : `<p class="muted">Nenhuma aplicacao candidata identificada por traces/RUM ainda.</p>`}</article><article class="card"><h3>Regras de aplicacao</h3><p class="muted">Proximo passo: persistir regras como URL comeca/termina/contem/igual, dominio, webserver hostname, servico ou API. Hoje a API ja sugere nomes como LAS Home, LAS Protobuf e LAS Smoke a partir das URLs reais.</p><pre><code>Ex.: /las/home = LAS Home\nEx.: /las/protobuf = LAS Protobuf</code></pre></article><article class="card"><h3>Como ativar RUM</h3><p class="muted">Inclua o script antes de fechar o body da aplicacao web. Ele coleta navigation timing, clicks, erros JS e fetch().</p><pre><code>&lt;script src="/api/v1/agents/download/rum-js?appname=minha-app"&gt;&lt;/script&gt;</code></pre></article></section>`);
   bindFilters("applications", renderApplications);
   $$(".app-detail-trigger").forEach((button) => button.addEventListener("click", () => renderApplicationDetail(button.dataset.appName)));
 }
@@ -1887,7 +2421,7 @@ async function renderLogs() {
 
 async function renderTracesLegacy() {
   const items = await api(`/api/v1/traces${queryString(state.filters.traces || { timeframe: "24h" })}`);
-  render(`<section class="grid"><article class="card"><div class="section-header"><div><h3>Traces OpenTelemetry</h3><p class="muted">Traces reais recebidos por OTLP JSON/Protobuf via mTLS ou gateway.</p></div><div class="actions"><a class="button ghost" href="/api/v1/agents/download/otel-installer?appname=my-service&language=java" target="_blank" rel="noreferrer">Script auto OTel</a><a class="button ghost" href="/api/v1/agents/download/otel-config?language=auto" target="_blank" rel="noreferrer">Docs multi linguagem</a></div></div>${filterPanel("traces", [{ name: "host", label: "Host" }, { name: "service", label: "Servico" }, { name: "status", label: "Status" }, { name: "q", label: "Trace/URL/contexto" }])}${items.length ? table(["Trace", "Servico", "Nome", "Status", "Metodo", "URL", "Duracao"], items.map((trace) => [`<span class="mono">${esc(trace.trace_id)}</span>`, esc(trace.service), esc(trace.name), status(trace.status), esc(trace.method || "-"), esc(trace.url || "-"), `${num(trace.duration_ms)} ms`])) : `<p class="muted">Nenhum trace encontrado para os filtros aplicados.</p>`}</article><article class="card"><h3>Instrumentacao automatizada</h3><p class="muted">Baixe o helper e execute no host da aplicacao. Exemplo:</p><pre><code>bash las-otel-install.sh --host app01 --appname portal-cliente --language java</code></pre><p class="muted">A automacao completa por processo detectado sera ligada aos processos suportados: Java, .NET, Python, Node.js e Go.</p></article></section>`);
+  render(`<section class="grid"><article class="card"><div class="section-header"><div><h3>Traces OpenTelemetry</h3><p class="muted">Traces reais recebidos por OTLP JSON/Protobuf via mTLS ou gateway.</p></div><div class="actions"><a class="button ghost" href="/api/v1/agents/download/otel/linux?appname=my-service" target="_blank" rel="noreferrer">OTel Linux</a><a class="button ghost" href="/api/v1/agents/download/otel/windows?appname=my-service" target="_blank" rel="noreferrer">OTel Windows</a><a class="button ghost" href="/api/v1/agents/download/otel-config?language=auto" target="_blank" rel="noreferrer">Docs multi linguagem</a></div></div>${filterPanel("traces", [{ name: "host", label: "Host" }, { name: "service", label: "Servico" }, { name: "status", label: "Status" }, { name: "q", label: "Trace/URL/contexto" }])}${items.length ? table(["Trace", "Servico", "Nome", "Status", "Metodo", "URL", "Duracao"], items.map((trace) => [`<span class="mono">${esc(trace.trace_id)}</span>`, esc(trace.service), esc(trace.name), status(trace.status), esc(trace.method || "-"), esc(trace.url || "-"), `${num(trace.duration_ms)} ms`])) : `<p class="muted">Nenhum trace encontrado para os filtros aplicados.</p>`}</article><article class="card"><h3>Instrumentacao automatizada</h3><p class="muted">Baixe o helper e execute no host da aplicacao. Exemplo:</p><pre><code>bash las-otel-installer-linux.sh --select all\npowershell -ExecutionPolicy Bypass -File .\\las-otel-installer-windows.ps1</code></pre><p class="muted">A automacao detecta Java, .NET, Python, Node.js, PHP e webservers, preparando assets sem reiniciar servicos automaticamente.</p></article></section>`);
   bindFilters("traces", renderTraces);
 }
 
@@ -2041,7 +2575,7 @@ async function renderTraceDetailV2(traceId) {
 
 async function renderTraces() {
   const items = await api(`/api/v1/traces${queryString(state.filters.traces || { timeframe: "24h" })}`);
-  render(`<section class="grid"><article class="card"><div class="section-header"><div><h3>Traces OpenTelemetry</h3><p class="muted">Traces reais recebidos por OTLP JSON/Protobuf via mTLS ou gateway. Clique no trace para drill down.</p></div><div class="actions"><a class="button ghost" href="/api/v1/agents/download/otel-installer?appname=my-service&language=java" target="_blank" rel="noreferrer">Script auto OTel</a><a class="button ghost" href="/api/v1/agents/download/otel-config?language=auto" target="_blank" rel="noreferrer">Docs multi linguagem</a></div></div>${filterPanel("traces", [{ name: "host", label: "Host" }, { name: "service", label: "Servico" }, { name: "status", label: "Status" }, { name: "q", label: "Trace/URL/contexto" }])}${items.length ? table(["Trace", "Servico", "Nome", "Status", "Metodo", "URL", "Duracao"], items.map((trace) => [`<button class="link-button trace-detail-trigger" data-trace-id="${esc(trace.trace_id)}" type="button"><span class="mono">${esc(trace.trace_id)}</span></button>`, esc(trace.service), esc(trace.name), status(trace.status), esc(trace.method || "-"), esc(trace.url || "-"), `${num(trace.duration_ms)} ms`])) : `<p class="muted">Nenhum trace encontrado para os filtros aplicados.</p>`}</article><article class="card"><h3>Instrumentacao automatizada</h3><p class="muted">Baixe o helper e execute no host da aplicacao. Exemplo:</p><pre><code>bash las-otel-install.sh --host app01 --appname portal-cliente --language java</code></pre><p class="muted">A automacao completa por processo detectado sera ligada aos processos suportados: Java, .NET, Python, Node.js e Go.</p></article></section>`);
+  render(`<section class="grid"><article class="card"><div class="section-header"><div><h3>Traces OpenTelemetry</h3><p class="muted">Traces reais recebidos por OTLP JSON/Protobuf via mTLS ou gateway. Clique no trace para drill down.</p></div><div class="actions"><a class="button ghost" href="/api/v1/agents/download/otel/linux?appname=my-service" target="_blank" rel="noreferrer">OTel Linux</a><a class="button ghost" href="/api/v1/agents/download/otel/windows?appname=my-service" target="_blank" rel="noreferrer">OTel Windows</a><a class="button ghost" href="/api/v1/agents/download/otel-config?language=auto" target="_blank" rel="noreferrer">Docs multi linguagem</a></div></div>${filterPanel("traces", [{ name: "host", label: "Host" }, { name: "service", label: "Servico" }, { name: "status", label: "Status" }, { name: "q", label: "Trace/URL/contexto" }])}${items.length ? table(["Trace", "Servico", "Nome", "Status", "Metodo", "URL", "Duracao"], items.map((trace) => [`<button class="link-button trace-detail-trigger" data-trace-id="${esc(trace.trace_id)}" type="button"><span class="mono">${esc(trace.trace_id)}</span></button>`, esc(trace.service), esc(trace.name), status(trace.status), esc(trace.method || "-"), esc(trace.url || "-"), `${num(trace.duration_ms)} ms`])) : `<p class="muted">Nenhum trace encontrado para os filtros aplicados.</p>`}</article><article class="card"><h3>Instrumentacao automatizada</h3><p class="muted">Baixe o instalador no host da aplicacao. Ele identifica Java, .NET, Python, Node.js, PHP e webservers, lista os processos e permite selecionar quais serao preparados para OTLP/RUM.</p><pre><code>bash las-otel-installer-linux.sh\npowershell -ExecutionPolicy Bypass -File .\\las-otel-installer-windows.ps1</code></pre><p class="muted">Quando nao for seguro aplicar automaticamente, o script informa o motivo e gera os passos manuais.</p></article></section>`);
   bindFilters("traces", renderTraces);
   $$(".trace-detail-trigger").forEach((button) => button.addEventListener("click", () => renderTraceDetail(button.dataset.traceId)));
 }
@@ -2190,8 +2724,34 @@ async function renderOrchestration() {
 async function renderSettings() {
   const data = await api("/api/v1/settings");
   const channels = await api("/api/v1/settings/notification-channels");
-  render(`<section class="grid"><article class="card"><h3>Configuracoes Tenant</h3><p class="muted">Instalacoes, gateways, tarefas, alertas e integracoes ficam agrupados aqui para manter a navegacao principal focada na operacao.</p><div class="actions"><button class="button ghost settings-shortcut" data-view="onboarding" type="button">Instalacoes</button><button class="button ghost settings-shortcut" data-view="gateways" type="button">Gateways</button><button class="button ghost settings-shortcut" data-view="agents" type="button">Agentes</button><button class="button ghost settings-shortcut" data-view="tasks" type="button">Tasks</button><button class="button ghost settings-shortcut" data-view="alerts" type="button">Alertas</button><button class="button ghost settings-shortcut" data-view="integrations" type="button">Integracoes</button><button class="button ghost settings-shortcut" data-view="users" type="button">Usuarios</button></div></article><section class="settings-grid"><article class="card"><h3>Configuracoes da plataforma</h3><form id="settings-form" class="form-grid"><label>Empresa<input name="company_name" value="${esc(data.settings.company_name)}" required></label><label>Nome da plataforma<input name="platform_name" value="${esc(data.settings.platform_name)}" required></label><label>URL da plataforma<input name="platform_url" value="${esc(data.settings.platform_url)}" required></label><label>URL publica<input name="public_web_url" value="${esc(data.settings.public_web_url || "")}"></label><label>SMTP host<input name="smtp_host" value="${esc(data.settings.smtp_host || "")}"></label><label>SMTP porta<input name="smtp_port" type="number" value="${esc(data.settings.smtp_port || "")}"></label><label>SMTP usuario<input name="smtp_user" value="${esc(data.settings.smtp_user || "")}"></label><label>SMTP remetente<input name="smtp_from" value="${esc(data.settings.smtp_from || "")}"></label><label>IA provider<select name="ai_provider"><option ${data.settings.ai_provider === "openai" ? "selected" : ""}>openai</option><option ${data.settings.ai_provider === "anthropic" ? "selected" : ""}>anthropic</option><option ${data.settings.ai_provider === "gemini" ? "selected" : ""}>gemini</option></select></label><label>Modelo IA<input name="ai_model" value="${esc(data.settings.ai_model || "")}"></label><label>Cor primaria<input name="theme_primary" value="${esc(data.settings.theme_primary || "#ff375f")}"></label><label>Cor secundaria<input name="theme_secondary" value="${esc(data.settings.theme_secondary || "#16233a")}"></label><label>Cor da superficie<input name="theme_surface" value="${esc(data.settings.theme_surface || "#0c1527")}"></label></form><div class="actions" style="margin-top:14px"><button id="save-settings" class="button primary" type="button">Salvar</button></div><p id="settings-message" class="message"></p></article><article class="card"><h3>Canais de notificacao</h3>${channels.length ? table(["Nome", "Tipo", "Status"], channels.map((channel) => [esc(channel.name), esc(channel.type), channel.enabled ? "habilitado" : "desabilitado"])) : `<p class="muted">Nenhum canal configurado.</p>`}<form id="channel-form" style="display:grid; gap:12px; margin-top:14px"><label>Nome<input name="name" required></label><label>Tipo<select name="type"><option>email</option><option>slack</option><option>teams</option><option>telegram</option><option>discord</option><option>webhook</option></select></label><label>Configuracao JSON<textarea name="config">{}</textarea></label><label><input type="checkbox" name="enabled" checked style="width:auto; margin-right:8px">Habilitado</label></form><div class="actions" style="margin-top:14px"><button id="save-channel" class="button secondary" type="button">Salvar canal</button></div><p id="channel-message" class="message"></p></article></section></section>`);
+  const user = state.currentUser || {};
+  render(`<section class="grid"><article class="card"><h3>Configuracoes Tenant</h3><p class="muted">Instalacoes, gateways, tarefas, alertas e integracoes ficam agrupados aqui para manter a navegacao principal focada na operacao.</p><div class="actions"><button class="button ghost settings-shortcut" data-view="onboarding" type="button">Instalacoes</button><button class="button ghost settings-shortcut" data-view="gateways" type="button">Gateways</button><button class="button ghost settings-shortcut" data-view="agents" type="button">Agentes</button><button class="button ghost settings-shortcut" data-view="tasks" type="button">Tasks</button><button class="button ghost settings-shortcut" data-view="alerts" type="button">Alertas</button><button class="button ghost settings-shortcut" data-view="integrations" type="button">Integracoes</button><button class="button ghost settings-shortcut" data-view="users" type="button">Usuarios</button></div></article><section class="settings-grid"><article class="card"><h3>Meu perfil e senha</h3><form id="profile-form" class="form-grid"><label>Nome completo<input name="full_name" value="${esc(user.full_name || "")}"></label><label>E-mail<input name="email" type="email" value="${esc(user.email || "")}" required></label><label>Usuario<input name="username" value="${esc(user.username || "")}" required></label><label>Telefone<input name="phone" value="${esc(user.phone || "")}" placeholder="+55 11 99999-9999"></label></form><div class="actions" style="margin-top:14px"><button id="save-profile" class="button primary" type="button">Salvar perfil</button></div><p id="profile-message" class="message"></p><hr><form id="password-form" class="form-grid"><label>Senha atual<input name="current_password" type="password" autocomplete="current-password" required></label><label>Nova senha<input name="new_password" type="password" autocomplete="new-password" minlength="4" required></label><label>Confirmar nova senha<input name="confirm_password" type="password" autocomplete="new-password" minlength="4" required></label></form><div class="actions" style="margin-top:14px"><button id="change-password" class="button secondary" type="button">Alterar senha</button></div><p id="password-message" class="message"></p></article><article class="card"><h3>Configuracoes da plataforma</h3><form id="settings-form" class="form-grid"><label>Empresa<input name="company_name" value="${esc(data.settings.company_name)}" required></label><label>Nome da plataforma<input name="platform_name" value="${esc(data.settings.platform_name)}" required></label><label>URL da plataforma<input name="platform_url" value="${esc(data.settings.platform_url)}" required></label><label>URL publica<input name="public_web_url" value="${esc(data.settings.public_web_url || "")}"></label><label>SMTP host<input name="smtp_host" value="${esc(data.settings.smtp_host || "")}"></label><label>SMTP porta<input name="smtp_port" type="number" value="${esc(data.settings.smtp_port || "")}"></label><label>SMTP usuario<input name="smtp_user" value="${esc(data.settings.smtp_user || "")}"></label><label>SMTP remetente<input name="smtp_from" value="${esc(data.settings.smtp_from || "")}"></label><label>IA provider<select name="ai_provider"><option ${data.settings.ai_provider === "openai" ? "selected" : ""}>openai</option><option ${data.settings.ai_provider === "anthropic" ? "selected" : ""}>anthropic</option><option ${data.settings.ai_provider === "gemini" ? "selected" : ""}>gemini</option></select></label><label>Modelo IA<input name="ai_model" value="${esc(data.settings.ai_model || "")}"></label><label>Cor primaria<input name="theme_primary" value="${esc(data.settings.theme_primary || "#ff375f")}"></label><label>Cor secundaria<input name="theme_secondary" value="${esc(data.settings.theme_secondary || "#16233a")}"></label><label>Cor da superficie<input name="theme_surface" value="${esc(data.settings.theme_surface || "#0c1527")}"></label></form><div class="actions" style="margin-top:14px"><button id="save-settings" class="button primary" type="button">Salvar</button></div><p id="settings-message" class="message"></p></article><article class="card"><h3>Canais de notificacao</h3>${channels.length ? table(["Nome", "Tipo", "Status"], channels.map((channel) => [esc(channel.name), esc(channel.type), channel.enabled ? "habilitado" : "desabilitado"])) : `<p class="muted">Nenhum canal configurado.</p>`}<form id="channel-form" style="display:grid; gap:12px; margin-top:14px"><label>Nome<input name="name" required></label><label>Tipo<select name="type"><option>email</option><option>slack</option><option>teams</option><option>telegram</option><option>discord</option><option>webhook</option></select></label><label>Configuracao JSON<textarea name="config">{}</textarea></label><label><input type="checkbox" name="enabled" checked style="width:auto; margin-right:8px">Habilitado</label></form><div class="actions" style="margin-top:14px"><button id="save-channel" class="button secondary" type="button">Salvar canal</button></div><p id="channel-message" class="message"></p></article></section></section>`);
   $$(".settings-shortcut").forEach((button) => button.addEventListener("click", () => loadView(button.dataset.view)));
+  $("#save-profile").addEventListener("click", async () => {
+    const form = Object.fromEntries(new FormData($("#profile-form")).entries());
+    try {
+      const response = await api("/api/v1/auth/me", { method: "PUT", body: JSON.stringify(form) });
+      state.currentUser = response.user || response;
+      $("#profile-message").textContent = "Perfil salvo na plataforma.";
+      await bootstrap();
+    } catch (error) {
+      $("#profile-message").textContent = error.message;
+    }
+  });
+  $("#change-password").addEventListener("click", async () => {
+    const form = Object.fromEntries(new FormData($("#password-form")).entries());
+    if (form.new_password !== form.confirm_password) {
+      $("#password-message").textContent = "A confirmacao da nova senha nao confere.";
+      return;
+    }
+    try {
+      await api("/api/v1/auth/change-password", { method: "POST", body: JSON.stringify({ current_password: form.current_password, new_password: form.new_password }) });
+      $("#password-form").reset();
+      $("#password-message").textContent = "Senha alterada e persistida na plataforma.";
+    } catch (error) {
+      $("#password-message").textContent = error.message;
+    }
+  });
   $("#save-settings").addEventListener("click", async () => {
     const form = Object.fromEntries(new FormData($("#settings-form")).entries());
     form.smtp_port = form.smtp_port ? Number(form.smtp_port) : null;
@@ -2217,7 +2777,20 @@ async function renderSettings() {
 
 async function renderTickets() {
   const items = await api("/api/v1/tickets");
-  render(`<section class="grid two"><article class="card"><h3>Abertura de ticket</h3><p class="muted">O ticket ja segue com dados do tenant e passa pela analise IA antes do administrador da plataforma atuar.</p><form id="ticket-form" class="form-grid"><label>Titulo<input name="title" required></label><label>Severidade<select name="severity"><option value="medium">media</option><option value="low">baixa</option><option value="high">alta</option><option value="critical">critica</option></select></label><label>Categoria<select name="category"><option value="incident">incidente</option><option value="question">duvida</option><option value="change">mudanca</option></select></label><label>Servico<input name="service_name" placeholder="api, gateway, host, aplicacao"></label><label style="grid-column:1/-1">Descricao<textarea name="description" required placeholder="Descreva o problema, horarios, impacto e passos ja testados."></textarea></label><label style="grid-column:1/-1">Logs/procedimentos<textarea name="log_collection_notes" placeholder="Cole trechos de logs ou instrucoes de coleta ja executadas."></textarea></label><label style="grid-column:1/-1">Anexos referenciados<textarea name="attachments" placeholder="Ex.: print-login.png, /var/log/nginx/error.log, coleta-kalix.zip"></textarea></label></form><div class="actions" style="margin-top:14px"><button id="create-ticket" class="button primary" type="button">Criar ticket</button></div><p id="ticket-message" class="message"></p></article><article class="card"><h3>Tickets do tenant</h3>${items.length ? table(["Titulo", "Severidade", "Status", "Servico", "IA"], items.map((ticket) => [`<button class="link-button ticket-detail" data-ticket-id="${esc(ticket.id)}" type="button">${esc(ticket.title)}</button>`, esc(ticket.severity), status(ticket.status), esc(ticket.service_name || "-"), esc(ticket.ai_status || "-")])) : `<p class="muted">Nenhum ticket aberto.</p>`}</article></section>`);
+  const platformAdmin = isPlatformAdmin();
+  const ticketHeaders = platformAdmin
+    ? ["Titulo", "Tenant", "Severidade", "Status", "Servico", "IA"]
+    : ["Titulo", "Severidade", "Status", "Servico", "IA"];
+  const ticketRows = items.map((ticket) => {
+    const title = `<button class="link-button ticket-detail" data-ticket-id="${esc(ticket.id)}" type="button">${esc(ticket.title)}</button>`;
+    const base = [title, esc(ticket.severity), status(ticket.status), esc(ticket.service_name || "-"), esc(ticket.ai_status || "-")];
+    return platformAdmin ? [title, esc(ticket.tenant_name || ticket.tenant_id || "-"), ...base.slice(1)] : base;
+  });
+  const listTitle = platformAdmin ? "Tickets dos clientes/tenants" : "Tickets do tenant";
+  const listHint = platformAdmin
+    ? "Visao consolidada para administracao principal da plataforma."
+    : "Historico aberto por usuarios deste tenant.";
+  render(`<section class="grid two"><article class="card"><h3>Abertura de ticket</h3><p class="muted">O ticket ja segue com dados do tenant e passa pela analise IA antes do administrador da plataforma atuar.</p><form id="ticket-form" class="form-grid"><label>Titulo<input name="title" required></label><label>Severidade<select name="severity"><option value="medium">media</option><option value="low">baixa</option><option value="high">alta</option><option value="critical">critica</option></select></label><label>Categoria<select name="category"><option value="incident">incidente</option><option value="question">duvida</option><option value="change">mudanca</option></select></label><label>Servico<input name="service_name" placeholder="api, gateway, host, aplicacao"></label><label style="grid-column:1/-1">Descricao<textarea name="description" required placeholder="Descreva o problema, horarios, impacto e passos ja testados."></textarea></label><label style="grid-column:1/-1">Logs/procedimentos<textarea name="log_collection_notes" placeholder="Cole trechos de logs ou instrucoes de coleta ja executadas."></textarea></label><label style="grid-column:1/-1">Anexos referenciados<textarea name="attachments" placeholder="Ex.: print-login.png, /var/log/nginx/error.log, coleta-kalix.zip"></textarea></label></form><div class="actions" style="margin-top:14px"><button id="create-ticket" class="button primary" type="button">Criar ticket</button></div><p id="ticket-message" class="message"></p></article><article class="card"><h3>${listTitle}</h3><p class="muted">${listHint}</p>${items.length ? table(ticketHeaders, ticketRows) : `<p class="muted">Nenhum ticket aberto.</p>`}</article></section>`);
   $("#create-ticket").addEventListener("click", async () => {
     const form = Object.fromEntries(new FormData($("#ticket-form")).entries());
     const attachments = String(form.attachments || "").split(/\r?\n/).map((name) => name.trim()).filter(Boolean).map((name) => ({ name }));
@@ -2413,9 +2986,77 @@ async function renderIntegrations() {
   $("#extension-modal-close").addEventListener("click", closeModal);
   $("#extension-modal-backdrop").addEventListener("click", closeModal);
 
+  const extensionFieldSpec = (extension) => {
+    const schema = extension.config_schema || {};
+    const defaults = schema.defaults || {};
+    if (Array.isArray(schema.fields) && schema.fields.length) {
+      return { fields: schema.fields, advanced: schema.advanced || [], defaults };
+    }
+    if (extension.category === "database") {
+      const bySlug = {
+        postgresql: { port: 5432, database: "postgres", user: "postgres" },
+        mysql: { port: 3306, database: "information_schema", user: "root" },
+        mariadb: { port: 3306, database: "information_schema", user: "root" },
+        sqlserver: { port: 1433, database: "master", user: "sa" },
+        oracle: { port: 1521, database: "", user: "" },
+        mongodb: { port: 27017, database: "admin", user: "" },
+        redis: { port: 6379, database: 0, user: "" },
+        elasticsearch: { port: 9200, database: "", user: "" },
+      }[extension.slug] || {};
+      return {
+        defaults: { lock_wait_threshold_s: 30, timeout_seconds: 10, ...bySlug },
+        fields: [
+          { name: "host", label: "Host/IP", type: "text", required: true },
+          { name: "port", label: "Porta", type: "number", required: true },
+          { name: "user", label: "Usuario", type: "text" },
+          { name: "password", label: "Senha", type: "password" },
+          { name: "database", label: "Banco/database", type: "text" },
+          { name: "instance", label: "Instancia", type: "text" },
+          { name: "lock_wait_threshold_s", label: "Threshold lock wait (s)", type: "number" },
+          { name: "timeout_seconds", label: "Timeout coleta (s)", type: "number" },
+          { name: "ssl", label: "Usar SSL/TLS", type: "checkbox" },
+        ],
+        advanced: [{ name: "custom_queries", label: "Metricas por query customizada", type: "metric_queries" }],
+      };
+    }
+    return {
+      defaults: {},
+      fields: [
+        { name: "host", label: "Host/IP ou URL", type: "text", required: true },
+        { name: "port", label: "Porta", type: "number" },
+        { name: "user", label: "Usuario", type: "text" },
+        { name: "password", label: "Senha/token", type: "password" },
+        { name: "timeout_seconds", label: "Timeout coleta (s)", type: "number", default: 10 },
+      ],
+      advanced: [{ name: "custom_queries", label: "Metricas customizadas", type: "metric_queries" }],
+    };
+  };
+
+  const renderConfigField = (field, cfg, defaults) => {
+    const value = cfg[field.name] ?? field.default ?? defaults[field.name] ?? "";
+    const required = field.required ? "required" : "";
+    if (field.type === "checkbox") {
+      return `<label><input type="checkbox" name="cfg_${esc(field.name)}" data-config-field="${esc(field.name)}" data-config-type="checkbox" style="width:auto; margin-right:8px" ${value ? "checked" : ""}>${esc(field.label || field.name)}</label>`;
+    }
+    if (field.type === "select") {
+      const options = field.options || [];
+      return `<label>${esc(field.label || field.name)}<select name="cfg_${esc(field.name)}" data-config-field="${esc(field.name)}" data-config-type="text" ${required}>${options.map((opt) => `<option value="${esc(opt)}" ${String(value) === String(opt) ? "selected" : ""}>${esc(opt)}</option>`).join("")}</select></label>`;
+    }
+    const inputType = field.type === "password" ? "password" : field.type === "number" ? "number" : "text";
+    return `<label>${esc(field.label || field.name)}<input name="cfg_${esc(field.name)}" data-config-field="${esc(field.name)}" data-config-type="${esc(inputType)}" type="${inputType}" value="${esc(String(value))}" ${required}></label>`;
+  };
+
+  const renderMetricQueries = (cfg) => {
+    const queries = Array.isArray(cfg.custom_queries) ? cfg.custom_queries : [];
+    return `<label style="grid-column:1/-1">Metricas por query customizada
+      <textarea name="custom_queries" rows="5" spellcheck="false" class="mono" placeholder='[{"metric":"orders_total","query":"SELECT count(*) FROM orders"}]'>${esc(JSON.stringify(queries, null, 2))}</textarea>
+      <small class="muted">Opcional. Cada query deve retornar um valor numerico/booleano para virar metrica e dashboard.</small>
+    </label>`;
+  };
+
   const renderInstanceForm = (extension, instance) => {
     const cfg = instance?.config || {};
-    const jsonCfg = JSON.stringify(cfg || {}, null, 2);
+    const spec = extensionFieldSpec(extension);
     return `
       <form class="form-grid extension-instance-form" data-instance-id="${esc(instance?.id || "")}">
         <label>Nome da instancia
@@ -2440,16 +3081,16 @@ async function renderIntegrations() {
           <input name="interval_seconds" type="number" min="60" value="${esc(String(instance?.interval_seconds || 300))}">
         </label>
         <label><input type="checkbox" name="enabled" style="width:auto; margin-right:8px" ${instance?.enabled !== false ? "checked" : ""}>Habilitada</label>
-        <label style="grid-column:1/-1">Configuracao JSON
-          <textarea name="config" rows="10" spellcheck="false" class="mono">${esc(jsonCfg)}</textarea>
-        </label>
+        <div style="grid-column:1/-1"><h4>Dados de conexao e coleta padrao</h4><p class="muted">Informe apenas os dados de acesso. O LAS coleta as estatisticas padrao da tecnologia e cria metricas/alertas quando aplicavel.</p></div>
+        ${spec.fields.map((field) => renderConfigField(field, cfg, spec.defaults)).join("")}
+        ${spec.advanced.some((field) => field.type === "metric_queries") ? renderMetricQueries(cfg) : ""}
       </form>
       <div class="actions">
         <button class="button primary extension-save" type="button" data-instance-id="${esc(instance?.id || "")}">Salvar</button>
         ${instance?.id ? `<button class="button ghost extension-run" type="button" data-instance-id="${esc(instance.id)}">Executar agora</button>` : ""}
         ${instance?.id ? `<button class="button ghost extension-delete" type="button" data-instance-id="${esc(instance.id)}">Excluir</button>` : ""}
       </div>
-      <p class="muted">Dica (DB): use chaves como host/port/user/password/database e opcionalmente custom_queries: [{"metric":"total_orders","query":"SELECT 1"}].</p>
+      <p class="muted">${esc(extension.readme || "As metricas padrao serao coletadas automaticamente pelo gateway selecionado.")}</p>
     `;
   };
 
@@ -2488,11 +3129,24 @@ async function renderIntegrations() {
     const getFormPayload = () => {
       const form = $(".extension-instance-form");
       const values = Object.fromEntries(new FormData(form).entries());
-      let config = {};
-      try { config = values.config ? JSON.parse(values.config) : {}; } catch { throw new Error("Config JSON invalido."); }
+      const config = {};
+      form.querySelectorAll("[data-config-field]").forEach((field) => {
+        const key = field.dataset.configField;
+        const type = field.dataset.configType;
+        if (type === "checkbox") {
+          config[key] = field.checked;
+        } else if (type === "number") {
+          config[key] = field.value === "" ? undefined : Number(field.value);
+        } else if (field.value !== "") {
+          config[key] = field.value;
+        }
+      });
+      if (values.custom_queries && values.custom_queries.trim()) {
+        try { config.custom_queries = JSON.parse(values.custom_queries); } catch { throw new Error("Metricas por query customizada precisam estar em JSON valido."); }
+      }
       return {
         name: values.name,
-        enabled: !!form.enabled.checked,
+        enabled: !!form.elements.enabled.checked,
         run_on: values.run_on,
         gateway_type: values.gateway_type,
         interval_seconds: Number(values.interval_seconds || 300),
@@ -2678,6 +3332,186 @@ docker compose up -d --build</code></pre>
   updateGatewayLinks();
 }
 
+function gatewayTypeLabel(type) {
+  return {
+    agents: "Gateway Agents",
+    integrations: "Gateway Integracoes",
+    logs: "Gateway de Logs",
+    security: "Gateway de Seguranca",
+    infra: "Gateway Infra",
+    proxy: "Gateway Proxy",
+  }[type] || type || "-";
+}
+
+function gatewaySyslogSummary(gateway) {
+  const syslog = gateway.syslog_runtime || {};
+  const listeners = Object.values(syslog.listeners || {});
+  const hasListening = listeners.some((listener) => listener?.status === "listening");
+  const hasError = listeners.some((listener) => listener?.status === "error") || !!syslog.last_error;
+  if (!syslog.enabled && gateway.type !== "logs") {
+    return "syslog off";
+  }
+  if (hasListening) {
+    return `syslog ouvindo | ${num(syslog.received || 0)} msgs`;
+  }
+  if (hasError) {
+    return `syslog erro | ${esc(syslog.last_error || "listener falhou")}`;
+  }
+  return "syslog aguardando listener";
+}
+
+async function renderGateways() {
+  const items = await api("/api/v1/gateways");
+  const topology = await api("/api/v1/gateways/topology");
+  const rows = items.map((gateway) => {
+    const metrics = gateway.resource_metrics || {};
+    const syslogSummary = gatewaySyslogSummary(gateway);
+    return [
+      `<button class="link-button gateway-detail-trigger" data-gateway-id="${esc(gateway.id)}" type="button"><strong>${esc(gateway.name)}</strong></button><br><small>${esc(gatewayTypeLabel(gateway.type))}</small>`,
+      esc(gateway.cluster_name || "default"),
+      `${num(gateway.priority)} / ${num(gateway.weight)}`,
+      gateway.shared_with_tenants ? "compartilhado" : gateway.failover_only ? "failover" : "tenant",
+      status(gateway.status),
+      `${maybeNum(metrics.cpuUsage, "%")} CPU<br><small>${maybeNum(metrics.memoryUsage, "%")} RAM</small><br><small>${syslogSummary}</small>`,
+      esc(gateway.public_endpoint || (gateway.host ? `${gateway.host}:${gateway.port}` : "-")),
+      `<small>${fmt(gateway.last_activity || gateway.last_heartbeat)}</small><br><button class="button ghost gateway-edit" data-gateway-id="${esc(gateway.id)}" type="button">Editar</button>`,
+    ];
+  });
+
+  render(`<section class="grid two"><article class="card"><div class="section-header"><div><h3>Gateways</h3><p class="muted">Heartbeat, consumo basico, fila local, tipo e cluster. Clique no nome para o drilldown operacional.</p></div></div>${items.length ? table(["Nome", "Cluster", "Prior/Peso", "Escopo", "Status", "Recursos", "Endpoint", "Acoes"], rows) : `<p class="muted">Nenhum gateway criado ou instalado ainda.</p>`}<p class="muted">Gateways sem heartbeat aparecem como pendentes/offline para facilitar diagnostico de instalacao.</p>${topology.clusters.length ? topology.clusters.map((cluster) => `<div class="card" style="margin-top:12px"><strong>${esc(cluster.cluster_name)}</strong><p class="muted">Primarios: ${num(cluster.primary.length)} | Failover: ${num(cluster.failover.length)} | Compartilhados: ${num(cluster.shared.length)}</p></div>`).join("") : ""}</article><article class="card"><h3>Gateway e cluster</h3><form id="gateway-form" class="form-grid"><input type="hidden" name="gateway_id"><label>Nome<input name="name" required></label><label>Tipo<select name="type"><option value="agents">Gateway Agents</option><option value="integrations">Gateway Integracoes</option><option value="logs">Gateway de Logs</option><option value="security">Gateway de Seguranca</option></select></label><label>Host<input name="host" placeholder="gw01.soservices.com.br"></label><label>Porta<input name="port" value="9443" type="number"></label><label>Cluster<input name="cluster_name" value="default"></label><label>Prioridade<input name="priority" value="100" type="number"></label><label>Peso<input name="weight" value="1" type="number"></label><label>Public endpoint<input name="public_endpoint" placeholder="https://gw01.soservices.com.br:9443"></label><label><input type="checkbox" name="failover_only" style="width:auto; margin-right:8px">Somente failover</label><label><input type="checkbox" name="shared_with_tenants" style="width:auto; margin-right:8px">Compartilhar com tenants</label><label><input type="checkbox" name="tls_enabled" checked style="width:auto; margin-right:8px">TLS habilitado</label><label><input type="checkbox" name="compress_enabled" checked style="width:auto; margin-right:8px">Compressao habilitada</label><label><input type="checkbox" name="encrypt_enabled" checked style="width:auto; margin-right:8px">Protecao dos dados habilitada</label></form><div class="actions" style="margin-top:14px"><button id="create-gateway" class="button primary" type="button">Salvar gateway</button><button id="delete-gateway" class="button ghost" type="button">Excluir</button><button id="cleanup-gateways" class="button ghost" type="button">Limpar testes</button><button id="reset-gateway" class="button ghost" type="button">Novo</button><a class="button ghost" href="/api/v1/agents/download/gateway/linux?gateway_type=agents" target="_blank" rel="noreferrer">Gateway Linux</a><a class="button ghost" href="/api/v1/agents/download/gateway/windows?gateway_type=agents" target="_blank" rel="noreferrer">Gateway Windows Setup</a><a class="button ghost" href="/api/v1/agents/download/gateway/windows?format=ps1&gateway_type=agents" target="_blank" rel="noreferrer">Gateway Windows Script</a></div><p id="gateway-message" class="message"></p></article></section>`);
+
+  const form = $("#gateway-form");
+  const resetGatewayForm = () => {
+    form.gateway_id.value = "";
+    form.name.value = "";
+    form.type.value = "agents";
+    form.host.value = "";
+    form.port.value = 9443;
+    form.cluster_name.value = "default";
+    form.priority.value = 100;
+    form.weight.value = 1;
+    form.public_endpoint.value = "";
+    form.failover_only.checked = false;
+    form.shared_with_tenants.checked = false;
+    form.tls_enabled.checked = true;
+    form.compress_enabled.checked = true;
+    form.encrypt_enabled.checked = true;
+  };
+  const fillGatewayForm = (gateway) => {
+    form.gateway_id.value = gateway.id;
+    form.name.value = gateway.name || "";
+    form.type.value = gateway.type || "agents";
+    form.host.value = gateway.host || "";
+    form.port.value = gateway.port || 9443;
+    form.cluster_name.value = gateway.cluster_name || "default";
+    form.priority.value = gateway.priority || 100;
+    form.weight.value = gateway.weight || 1;
+    form.public_endpoint.value = gateway.public_endpoint || "";
+    form.failover_only.checked = !!gateway.failover_only;
+    form.shared_with_tenants.checked = !!gateway.shared_with_tenants;
+    form.tls_enabled.checked = !!gateway.tls_enabled;
+    form.compress_enabled.checked = !!gateway.compress_enabled;
+    form.encrypt_enabled.checked = !!gateway.encrypt_enabled;
+  };
+  resetGatewayForm();
+  $$(".gateway-detail-trigger").forEach((button) => button.addEventListener("click", () => renderGatewayDetail(button.dataset.gatewayId)));
+  $$(".gateway-edit").forEach((button) => button.addEventListener("click", () => {
+    const gateway = items.find((item) => item.id === button.dataset.gatewayId);
+    if (gateway) fillGatewayForm(gateway);
+  }));
+  $("#create-gateway").addEventListener("click", async () => {
+    const payload = Object.fromEntries(new FormData(form).entries());
+    payload.port = Number(payload.port || 9443);
+    payload.priority = Number(payload.priority || 100);
+    payload.weight = Number(payload.weight || 1);
+    payload.failover_only = form.failover_only.checked;
+    payload.shared_with_tenants = form.shared_with_tenants.checked;
+    payload.tls_enabled = form.tls_enabled.checked;
+    payload.compress_enabled = form.compress_enabled.checked;
+    payload.encrypt_enabled = form.encrypt_enabled.checked;
+    try {
+      if (form.gateway_id.value) {
+        await api(`/api/v1/gateways/${form.gateway_id.value}`, { method: "PUT", body: JSON.stringify(payload) });
+        $("#gateway-message").textContent = "Gateway atualizado.";
+      } else {
+        await api("/api/v1/gateways", { method: "POST", body: JSON.stringify(payload) });
+        $("#gateway-message").textContent = "Gateway criado.";
+      }
+      await renderGateways();
+    } catch (error) {
+      $("#gateway-message").textContent = error.message;
+    }
+  });
+  $("#delete-gateway").addEventListener("click", async () => {
+    if (!form.gateway_id.value) {
+      $("#gateway-message").textContent = "Selecione um gateway para excluir.";
+      return;
+    }
+    try {
+      await api(`/api/v1/gateways/${form.gateway_id.value}`, { method: "DELETE" });
+      $("#gateway-message").textContent = "Gateway excluido.";
+      await renderGateways();
+    } catch (error) {
+      $("#gateway-message").textContent = error.message;
+    }
+  });
+  $("#cleanup-gateways").addEventListener("click", async () => {
+    try {
+      await api("/api/v1/gateways/cleanup", {
+        method: "POST",
+        body: JSON.stringify({
+          delete_names: ["shared-gateway-core", "Gateway infra", "Gateway infra Windows"],
+          delete_prefixes: ["demo-gw-", "gateway-hml-"],
+          delete_offline_only: true,
+        }),
+      });
+      $("#gateway-message").textContent = "Gateways de teste removidos.";
+      await renderGateways();
+    } catch (error) {
+      $("#gateway-message").textContent = error.message;
+    }
+  });
+  $("#reset-gateway").addEventListener("click", resetGatewayForm);
+}
+
+async function renderGatewayDetail(gatewayId, options = {}) {
+  const timeframe = options.timeframe || state.gatewayTimeframe || "1h";
+  const params = new URLSearchParams({ timeframe });
+  if (timeframe === "custom") {
+    if (options.start) params.set("start", new Date(options.start).toISOString());
+    if (options.end) params.set("end", new Date(options.end).toISOString());
+  }
+  const data = await api(`/api/v1/gateways/${gatewayId}/detail?${params.toString()}`);
+  const gateway = data.gateway;
+  const metrics = data.metrics || [];
+  const latest = latestPoint(metrics);
+  const agents = data.agents || [];
+  const syslog = data.syslog_runtime || gateway.syslog_runtime || {};
+  const syslogListeners = Object.entries(syslog.listeners || {});
+  const syslogRows = syslogListeners.map(([key, listener]) => [
+    esc(key),
+    status(listener?.status || "unknown"),
+    esc(listener?.error || "-"),
+    fmt(listener?.updated_at),
+  ]);
+  render(`<section class="entity-detail"><article class="detail-hero card"><div class="detail-hero-main"><p class="eyebrow">Gateway detalhado</p><h2>${esc(gateway.name)}</h2><p class="muted">${esc(gatewayTypeLabel(gateway.type))} - ${esc(gateway.public_endpoint || gateway.host || "-")}</p><div class="actions"><button id="back-gateways" class="button ghost" type="button">Voltar para gateways</button></div></div><div class="detail-health">${healthPill(gateway.status)}<small>Ultima atividade<br><strong>${fmt(gateway.last_activity || gateway.last_heartbeat)}</strong></small></div></article><article class="card detail-kpis">${metricTile("Versao", esc(gateway.version || "-"))}${metricTile("Cluster", esc(gateway.cluster_name || "default"), `prioridade ${num(gateway.priority)} / peso ${num(gateway.weight)}`)}${metricTile("CPU", maybeNum(latest.cpuUsage, "%"))}${metricTile("RAM", maybeNum(latest.memoryUsage, "%"))}${metricTile("Disco", maybeNum(latest.diskUsage, "%"))}${metricTile("Agentes usando", num(agents.length))}</article><article class="card"><div class="section-header"><div><h3>Consumo do gateway</h3><p class="muted">Historico enviado pelo heartbeat do proprio gateway.</p></div></div>${timeframeControl("gateway-detail", timeframe)}<div class="charts-grid three">${seriesChart("CPU", metrics, [{ key: "cpuUsage", label: "CPU" }], { max: 100 })}${seriesChart("Memoria", metrics, [{ key: "memoryUsage", label: "Memoria" }], { max: 100 })}${seriesChart("Disco", metrics, [{ key: "diskUsage", label: "Disco" }], { max: 100 })}</div></article><section class="grid two"><article class="card"><h3>Syslog remoto</h3><div class="detail-kpis">${metricTile("Estado", syslog.enabled ? "habilitado" : "desabilitado")}${metricTile("Mensagens", num(syslog.received || 0), "desde o start")}${metricTile("Ultima origem", esc(syslog.last_source_ip || "-"))}${metricTile("Ultima msg", fmt(syslog.last_received_at))}</div>${syslogRows.length ? table(["Listener", "Status", "Erro", "Atualizado"], syslogRows) : `<p class="muted">Nenhum listener syslog reportado ainda. Valide se o gateway e do tipo logs e se a feature syslog esta habilitada.</p>`}${syslog.last_error ? `<p class="message">${esc(syslog.last_error)}</p>` : ""}</article><article class="card"><h3>Funcionalidades reportadas</h3>${(data.capabilities || []).length ? table(["Modulo", "Status"], data.capabilities.map((item) => [esc(item.key), item.enabled ? status("online") : status("offline")])) : `<p class="muted">Nenhum modulo reportado ainda. Aguarde o proximo heartbeat do gateway atualizado.</p>`}<p class="muted">Fila local: logs ${num(data.queues?.logs || 0)} | metricas ${num(data.queues?.metrics || 0)}. Ultimo lote: ${fmt(data.last_batch?.timestamp)}.</p></article><article class="card"><h3>Agentes roteados por este gateway</h3>${agents.length ? table(["Agente", "Host", "IP", "Status", "Ultimo heartbeat"], agents.map((agent) => [esc(agent.name || agent.id), agent.host_id ? `<button class="link-button gateway-agent-host" data-host-id="${esc(agent.host_id)}" type="button">${esc(agent.host || "-")}</button>` : esc(agent.host || "-"), esc(agent.ip || "-"), status(agent.status), fmt(agent.last_heartbeat)])) : `<p class="muted">Nenhum agente reportou uso deste gateway ainda.</p>`}</article></section></section>`);
+  const timeframeSelect = $("#gateway-detail-timeframe");
+  const customRanges = $$(".custom-range");
+  const updateCustomVisibility = () => customRanges.forEach((item) => item.classList.toggle("hidden", timeframeSelect.value !== "custom"));
+  updateCustomVisibility();
+  timeframeSelect.addEventListener("change", updateCustomVisibility);
+  $("#gateway-detail-apply").addEventListener("click", () => {
+    state.gatewayTimeframe = timeframeSelect.value;
+    renderGatewayDetail(gatewayId, {
+      timeframe: timeframeSelect.value,
+      start: $("#gateway-detail-start")?.value,
+      end: $("#gateway-detail-end")?.value,
+    });
+  });
+  $("#back-gateways").addEventListener("click", renderGateways);
+  $$(".gateway-agent-host").forEach((button) => button.addEventListener("click", () => renderHostDetail(button.dataset.hostId)));
+}
+
 async function loadView(view) {
   setView(view);
   closeInspector();
@@ -2755,7 +3589,10 @@ async function loadView(view) {
       await renderNetworkAssets();
       return;
     }
-    if (view === "security") {
+    if (view === "security" || view === "vulnerabilities" || view === "ids" || view === "pentest") {
+      if (view === "vulnerabilities") state.securityTab = "vulnerabilities";
+      if (view === "ids") state.securityTab = "ids";
+      if (view === "pentest") state.securityTab = "pentest";
       await renderSecurity();
       return;
     }
@@ -2772,6 +3609,8 @@ async function loadView(view) {
       return;
     }
     if (view === "gateways") {
+      await renderGateways();
+      return;
       const items = await api("/api/v1/gateways");
       const topology = await api("/api/v1/gateways/topology");
       render(`<section class="grid two"><article class="card"><h3>Gateways</h3>${items.length ? table(["Nome", "Cluster", "Prioridade", "Peso", "Escopo", "Status", "Endpoint", "Heartbeat"], items.map((gateway) => [`<button class="link-button gateway-edit" data-gateway-id="${esc(gateway.id)}" type="button">${esc(gateway.name)}</button><br><small>${esc(gateway.type)}</small>`, esc(gateway.cluster_name || "default"), num(gateway.priority), num(gateway.weight), gateway.shared_with_tenants ? "compartilhado" : gateway.failover_only ? "failover" : "tenant", status(gateway.status), esc(gateway.public_endpoint || (gateway.host ? `${gateway.host}:${gateway.port}` : "-")), fmt(gateway.last_heartbeat)])) : `<p class="muted">Nenhum gateway criado.</p>`}<p class="muted">A ordenacao dos agentes usa prioridade, depois peso para balanceamento e, por fim, failover.</p>${topology.clusters.length ? topology.clusters.map((cluster) => `<div class="card" style="margin-top:12px"><strong>${esc(cluster.cluster_name)}</strong><p class="muted">Primarios: ${num(cluster.primary.length)} | Failover: ${num(cluster.failover.length)} | Compartilhados: ${num(cluster.shared.length)}</p></div>`).join("") : ""}</article><article class="card"><h3>Gateway e cluster</h3><form id="gateway-form" class="form-grid"><input type="hidden" name="gateway_id"><label>Nome<input name="name" required></label><label>Tipo<select name="type"><option value="agents">Gateway Agents</option><option value="integrations">Gateway Integracoes</option><option value="logs">Gateway de Logs</option><option value="security">Gateway de Seguranca</option></select></label><label>Host<input name="host" placeholder="gw01.soservices.com.br"></label><label>Porta<input name="port" value="9443" type="number"></label><label>Cluster<input name="cluster_name" value="default"></label><label>Prioridade<input name="priority" value="100" type="number"></label><label>Peso<input name="weight" value="1" type="number"></label><label>Public endpoint<input name="public_endpoint" placeholder="https://gw01.soservices.com.br:9443"></label><label><input type="checkbox" name="failover_only" style="width:auto; margin-right:8px">Somente failover</label><label><input type="checkbox" name="shared_with_tenants" style="width:auto; margin-right:8px">Compartilhar com tenants</label><label><input type="checkbox" name="tls_enabled" checked style="width:auto; margin-right:8px">TLS habilitado</label><label><input type="checkbox" name="compress_enabled" checked style="width:auto; margin-right:8px">Compressao habilitada</label><label><input type="checkbox" name="encrypt_enabled" checked style="width:auto; margin-right:8px">Protecao dos dados habilitada</label></form><div class="actions" style="margin-top:14px"><button id="create-gateway" class="button primary" type="button">Salvar gateway</button><button id="delete-gateway" class="button ghost" type="button">Excluir</button><button id="cleanup-gateways" class="button ghost" type="button">Limpar testes</button><button id="reset-gateway" class="button ghost" type="button">Novo</button><a class="button ghost" href="/api/v1/agents/download/gateway/linux?gateway_type=agents" target="_blank" rel="noreferrer">Gateway Linux</a><a class="button ghost" href="/api/v1/agents/download/gateway/windows?gateway_type=agents" target="_blank" rel="noreferrer">Gateway Windows Setup</a><a class="button ghost" href="/api/v1/agents/download/gateway/windows?format=ps1&gateway_type=agents" target="_blank" rel="noreferrer">Gateway Windows Script</a></div><p id="gateway-message" class="message"></p></article></section>`);
@@ -2872,27 +3711,15 @@ async function loadView(view) {
     }
     if (view === "agents") {
       const items = await api("/api/v1/agents/tokens");
-      render(`<section class="grid two"><article class="card"><h3>Instaladores e automacao</h3><p class="muted">Para escolher perfil Infra/Completa e modulos por licenca, use o onboarding do tenant. Estes atalhos baixam o perfil Infra padrao.</p><div class="actions"><a class="button primary" href="/api/v1/agents/download/linux?profile=infra" target="_blank" rel="noreferrer">Agente Linux</a><a class="button ghost" href="/api/v1/agents/download/windows?profile=infra" target="_blank" rel="noreferrer">Agente Windows Setup</a><a class="button ghost" href="/api/v1/agents/download/windows?format=ps1&profile=infra" target="_blank" rel="noreferrer">Agente Windows Script</a><a class="button ghost" href="/api/v1/agents/download/docker?profile=infra" target="_blank" rel="noreferrer">Docker</a><a class="button ghost" href="/api/v1/agents/download/k8s?profile=infra" target="_blank" rel="noreferrer">Kubernetes</a><a class="button ghost" href="/api/v1/agents/download/otel-config?language=auto" target="_blank" rel="noreferrer">OTel multi linguagem</a></div></article><article class="card"><h3>Tokens emitidos</h3>${items.length ? table(["Nome", "Papel", "Status", "Preview"], items.map((token) => [esc(token.name), esc(token.role), token.active ? "ativo" : "revogado", `<span class="mono">${esc(token.token_preview)}</span>`])) : `<p class="muted">Nenhum token emitido.</p>`}</article></section>`);
+      render(`<section class="grid two"><article class="card"><h3>Instaladores e automacao</h3><p class="muted">Para escolher perfil Infra/Completa e modulos por licenca, use o onboarding do tenant. Estes atalhos baixam o perfil Infra padrao.</p><div class="actions"><a class="button primary" href="/api/v1/agents/download/linux?profile=infra" target="_blank" rel="noreferrer">Agente Linux</a><a class="button ghost" href="/api/v1/agents/download/windows?profile=infra" target="_blank" rel="noreferrer">Agente Windows Setup</a><a class="button ghost" href="/api/v1/agents/download/windows?format=ps1&profile=infra" target="_blank" rel="noreferrer">Agente Windows Script</a><a class="button ghost" href="/api/v1/agents/download/docker?profile=infra" target="_blank" rel="noreferrer">Docker</a><a class="button ghost" href="/api/v1/agents/download/k8s?profile=infra" target="_blank" rel="noreferrer">Kubernetes</a><a class="button ghost" href="/api/v1/agents/download/otel/linux?appname=auto-discovery" target="_blank" rel="noreferrer">OTel Linux</a><a class="button ghost" href="/api/v1/agents/download/otel/windows?appname=auto-discovery" target="_blank" rel="noreferrer">OTel Windows</a><a class="button ghost" href="/api/v1/agents/download/otel-config?language=auto" target="_blank" rel="noreferrer">OTel multi linguagem</a></div></article><article class="card"><h3>Tokens emitidos</h3>${items.length ? table(["Nome", "Papel", "Status", "Preview"], items.map((token) => [esc(token.name), esc(token.role), token.active ? "ativo" : "revogado", `<span class="mono">${esc(token.token_preview)}</span>`])) : `<p class="muted">Nenhum token emitido.</p>`}</article></section>`);
       return;
     }
     if (view === "tasks") {
-      await renderSimpleTable("tasks", "/api/v1/tasks", "Tarefas, scans e coletas", ["Nome", "Tipo", "Status", "Alvo", "Progresso"], (task) => [
-        `<strong>${esc(task.name)}</strong><br><small>${fmt(task.scheduled_at)}</small>`,
-        esc(task.type),
-        status(task.status),
-        esc(task.target || "-"),
-        `${num(task.progress)}%`,
-      ], "Nenhuma tarefa executada ainda.");
+      await renderTasks();
       return;
     }
     if (view === "alerts") {
-      await renderSimpleTable("alerts", "/api/v1/alerts/rules", "Regras de alerta", ["Nome", "Entidade", "Metrica", "Condicao", "Severidade"], (rule) => [
-        esc(rule.name),
-        esc(rule.entity_type),
-        esc(rule.metric),
-        `${esc(rule.condition_op)} ${num(rule.threshold_value)}`,
-        esc(rule.severity),
-      ], "Nenhuma regra criada ainda.");
+      await renderAlerts();
       return;
     }
     if (view === "integrations") {
@@ -2904,13 +3731,7 @@ async function loadView(view) {
       return;
     }
     if (view === "users") {
-      await renderSimpleTable("users", "/api/v1/users", "Usuarios", ["Usuario", "Nome", "Email", "Papel", "Status"], (user) => [
-        esc(user.username),
-        esc(user.full_name || "-"),
-        esc(user.email),
-        esc(user.role),
-        user.active ? "ativo" : "inativo",
-      ], "Nenhum usuario cadastrado.");
+      await renderUsers();
       return;
     }
     if (view === "settings") {
@@ -2941,6 +3762,7 @@ $("#login-form").addEventListener("submit", async (event) => {
 });
 
 $$(".nav-link").forEach((button) => {
+  if (!button.dataset.view) return;
   button.addEventListener("click", () => loadView(button.dataset.view));
 });
 

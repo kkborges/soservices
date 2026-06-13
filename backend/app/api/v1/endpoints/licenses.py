@@ -13,7 +13,15 @@ from app.db.base import get_db
 from app.middleware.auth import get_current_user
 from app.models import LicenseKey, Tenant, User
 from app.services.license_key_service import create_license_key, get_active_license_key_by_code
-from app.services.license_service import AGENT_MODULE_CATALOG, AGENT_PROFILES, PLAN_LICENSES, tenant_license_codes
+from app.services.license_service import (
+    AGENT_MODULE_CATALOG,
+    AGENT_PROFILES,
+    LICENSE_BILLING_UNIT_CATALOG,
+    LICENSE_PACKAGE_CATALOG,
+    PLAN_LICENSES,
+    merge_billing_config,
+    tenant_license_codes,
+)
 
 router = APIRouter(prefix="/licenses", tags=["licenses"])
 
@@ -33,6 +41,33 @@ class LicenseKeyCreatePayload(BaseModel):
 
 class LicenseActivatePayload(BaseModel):
     license_key: str
+
+
+class BillingUnitConfigPayload(BaseModel):
+    enabled: bool = True
+    price_per_unit: float = 0
+    included_units: float = 0
+    overage_price: float = 0
+    unit_label: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class BillingConfigPayload(BaseModel):
+    currency: str = "BRL"
+    billing_cycle: str = "monthly"
+    notes: Optional[str] = None
+    units: dict[str, BillingUnitConfigPayload] = Field(default_factory=dict)
+    packages: dict[str, dict] = Field(default_factory=dict)
+    discounts: dict[str, float] = Field(default_factory=dict)
+
+
+async def get_platform_settings_tenant(db: AsyncSession) -> Tenant:
+    tenants = (await db.execute(select(Tenant).order_by(Tenant.name))).scalars().all()
+    tenant = next((item for item in tenants if (item.settings or {}).get("internal_platform")), None)
+    tenant = tenant or (tenants[0] if tenants else None)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Platform tenant not found")
+    return tenant
 
 
 @router.get("/catalog")
@@ -62,6 +97,14 @@ async def license_catalog(user: User = Depends(get_current_user)):
         "license_codes": sorted(
             list({m.get("license") for m in AGENT_MODULE_CATALOG.values() if m.get("license")} | {"infra", "included"})
         ),
+        "billing_units": [
+            {"code": code, **spec}
+            for code, spec in LICENSE_BILLING_UNIT_CATALOG.items()
+        ],
+        "billing_packages": [
+            {"code": code, **spec}
+            for code, spec in LICENSE_PACKAGE_CATALOG.items()
+        ],
     }
 
 
@@ -152,3 +195,60 @@ async def create_license_key_admin(
     )
     return {"status": "created", "license_id": key.id, "code": key.code}
 
+
+@router.get("/admin/billing-config")
+async def get_billing_config_admin(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_superadmin(user)
+    tenant = await get_platform_settings_tenant(db)
+    settings = tenant.settings or {}
+    config = merge_billing_config(settings.get("license_billing"))
+    return {
+        "tenant_id": tenant.id,
+        "currency": config["currency"],
+        "billing_cycle": config["billing_cycle"],
+        "notes": config["notes"],
+        "units": [
+            {
+                "code": code,
+                **LICENSE_BILLING_UNIT_CATALOG[code],
+                **config["units"][code],
+            }
+            for code in LICENSE_BILLING_UNIT_CATALOG
+        ],
+        "packages": [
+            {
+                "code": code,
+                **LICENSE_PACKAGE_CATALOG[code],
+                **config["packages"][code],
+            }
+            for code in LICENSE_PACKAGE_CATALOG
+        ],
+        "discounts": config["discounts"],
+    }
+
+
+@router.put("/admin/billing-config")
+@router.patch("/admin/billing-config")
+async def save_billing_config_admin(
+    payload: BillingConfigPayload,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    require_superadmin(user)
+    tenant = await get_platform_settings_tenant(db)
+    current_settings = dict(tenant.settings or {})
+    config_input = {
+        "currency": payload.currency,
+        "billing_cycle": payload.billing_cycle,
+        "notes": payload.notes or "",
+        "units": {code: item.model_dump() for code, item in payload.units.items()},
+        "packages": payload.packages,
+        "discounts": payload.discounts,
+    }
+    current_settings["license_billing"] = merge_billing_config(config_input)
+    tenant.settings = current_settings
+    await db.commit()
+    return {"status": "saved"}
